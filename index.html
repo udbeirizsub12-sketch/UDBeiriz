@@ -692,7 +692,7 @@ async function shareOrEmailPDF(doc, fileName, {toEmail, emailSubject, emailBody}
   const blob = doc.output('blob');
   const file = (typeof File !== 'undefined') ? new File([blob], fileName, {type:'application/pdf'}) : null;
   if(file && navigator.canShare && navigator.canShare({files:[file]})){
-    navigator.share({files:[file], title:fileName}).catch(()=>{ fallbackDownloadBlob(blob, fileName); });
+    navigator.share({files:[file], title:fileName}).catch((e)=>{ if(e && e.name === 'AbortError') return; fallbackDownloadBlob(blob, fileName); });
   }else{
     fallbackDownloadBlob(blob, fileName);
   }
@@ -704,7 +704,7 @@ function fallbackDownloadBlob(blob, fileName){
   a.href = url; a.download = fileName;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 4000);
-  showToast('Ficheiro transferido');
+  showToast('PDF transferido — anexa-o no WhatsApp ou no email');
 }
 
 
@@ -852,6 +852,10 @@ function renderPresencas(subhead, wrap, fab){
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
             Marcar presenças
           </button>
+          <button class="pill-btn pill-send" data-action="send" data-id="${t.id}" style="flex:1;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Enviar PDF
+          </button>
         </div>
       </div>`;
     }).join('')}</div>`;
@@ -866,6 +870,9 @@ function renderPresencas(subhead, wrap, fab){
     });
     wrap.querySelectorAll('[data-action="open"]').forEach(el=>{
       el.onclick = ()=> openAttendanceSheet(el.dataset.id);
+    });
+    wrap.querySelectorAll('[data-action="send"]').forEach(el=>{
+      el.onclick = ()=> openSendTrainingSheet(el.dataset.id, false);
     });
   }
 
@@ -917,7 +924,7 @@ function openAttendanceSheet(trainingId){
     </div>
     <div class="sheet-actions">
       <button class="btn-cancel" id="aCancel">Fechar</button>
-      <button class="btn-save" id="aSave">Guardar e enviar</button>
+      <button class="btn-save" id="aSave">Guardar</button>
     </div>
   `);
 
@@ -937,16 +944,39 @@ function openAttendanceSheet(trainingId){
 
   document.getElementById('aSave').onclick = async ()=>{
     closeSheet();
-    try{ await saveUserData(); }catch(e){}
+    try{ await saveUserData(); }catch(e){ showToast('Falha ao guardar — verifica a ligação', true); }
     render();
+    openSendTrainingSheet(t.id, true);
+  };
+}
+
+/* escolher como enviar o PDF do treino: email ou WhatsApp */
+function openSendTrainingSheet(trainingId, justSaved){
+  const t = userData.trainings.find(x=>x.id===trainingId);
+  if(!t) return;
+  const fileName = `${currentUser.escalao}_Treino_${formatSheetName(t.date)}.pdf`;
+  openSheetRaw(`
+    <h2>${justSaved ? 'Presenças guardadas' : 'Enviar presenças'}</h2>
+    <p style="color:var(--muted);font-size:13.5px;margin-top:-8px;">Treino de ${formatDatePT(t.date)}. Como queres enviar o PDF?</p>
+    <div class="stack" style="margin-top:6px;">
+      <button class="btn btn-primary" id="sendPdfMail">Email<br><span style="font-size:11.5px;font-weight:600;opacity:.8;">${escapeHtml(currentUser.email)}</span></button>
+      <button class="btn btn-secondary" id="sendPdfWhats">WhatsApp / outra app</button>
+      <button class="btn btn-ghost" id="sendPdfClose">${justSaved ? 'Agora não' : 'Fechar'}</button>
+    </div>
+  `);
+  document.getElementById('sendPdfClose').onclick = closeSheet;
+  document.getElementById('sendPdfMail').onclick = async ()=>{
+    closeSheet();
     showToast('A gerar PDF e a enviar...');
-    const doc = buildTreinoPDF(t);
-    const fileName = `${currentUser.escalao}_Treino_${formatSheetName(t.date)}.pdf`;
-    await shareOrEmailPDF(doc, fileName, {
+    await shareOrEmailPDF(buildTreinoPDF(t), fileName, {
       toEmail: currentUser.email,
       emailSubject: fileName.replace('.pdf',''),
       emailBody: `Registo de presenças do treino de ${formatDatePT(t.date)} — ${currentUser.escalao}.`
     });
+  };
+  document.getElementById('sendPdfWhats').onclick = ()=>{
+    closeSheet();
+    shareOrEmailPDF(buildTreinoPDF(t), fileName);
   };
 }
 
@@ -1000,6 +1030,10 @@ function renderJogos(subhead, wrap, fab){
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
             Editar jogo
           </button>
+          <button class="pill-btn pill-send" data-action="send" data-id="${g.id}" style="flex:1;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Enviar PDF
+          </button>
         </div>
       </div>`;
     }).join('')}</div>`;
@@ -1014,6 +1048,9 @@ function renderJogos(subhead, wrap, fab){
     });
     wrap.querySelectorAll('[data-action="open"]').forEach(el=>{
       el.onclick = ()=> openGameSheet(el.dataset.id);
+    });
+    wrap.querySelectorAll('[data-action="send"]').forEach(el=>{
+      el.onclick = ()=> openSendGameSheet(el.dataset.id, false);
     });
   }
 
@@ -1098,7 +1135,7 @@ function openGameSheet(gameId){
     </div>
     <div class="sheet-actions">
       <button class="btn-cancel" id="gClose">Fechar</button>
-      <button class="btn-save" id="gFinish">Guardar e enviar</button>
+      <button class="btn-save" id="gFinish">Guardar</button>
     </div>
   `);
 
@@ -1126,16 +1163,45 @@ function openGameSheet(gameId){
     g.scoreUs = document.getElementById('scoreUs').value;
     g.scoreThem = document.getElementById('scoreThem').value;
     closeSheet();
-    try{ await saveUserData(); }catch(e){}
+    try{ await saveUserData(); }catch(e){ showToast('Falha ao guardar — verifica a ligação', true); }
     render();
+    openSendGameSheet(g.id, true);
+  };
+}
+
+function gameFileName(g){
+  const opp = String(g.opponent || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return `Jogo_${formatSheetName(g.date)}_${opp || 'adversario'}.pdf`;
+}
+
+/* escolher como enviar o PDF do jogo: email ou WhatsApp */
+function openSendGameSheet(gameId, justSaved){
+  const g = userData.games.find(x=>x.id===gameId);
+  if(!g) return;
+  const fileName = gameFileName(g);
+  openSheetRaw(`
+    <h2>${justSaved ? 'Jogo guardado' : 'Enviar jogo'}</h2>
+    <p style="color:var(--muted);font-size:13.5px;margin-top:-8px;">vs ${escapeHtml(g.opponent)} — ${formatDatePT(g.date)}. Como queres enviar o PDF?</p>
+    <div class="stack" style="margin-top:6px;">
+      <button class="btn btn-primary" id="sendPdfMail">Email<br><span style="font-size:11.5px;font-weight:600;opacity:.8;">${escapeHtml(currentUser.email)}</span></button>
+      <button class="btn btn-secondary" id="sendPdfWhats">WhatsApp / outra app</button>
+      <button class="btn btn-ghost" id="sendPdfClose">${justSaved ? 'Agora não' : 'Fechar'}</button>
+    </div>
+  `);
+  document.getElementById('sendPdfClose').onclick = closeSheet;
+  document.getElementById('sendPdfMail').onclick = async ()=>{
+    closeSheet();
     showToast('A gerar PDF e a enviar...');
-    const doc = buildJogoPDF(g);
-    const fileName = `Jogo_${formatSheetName(g.date)}_${g.opponent.replace(/[^a-zA-Z0-9]+/g,'_')}.pdf`;
-    await shareOrEmailPDF(doc, fileName, {
+    await shareOrEmailPDF(buildJogoPDF(g), fileName, {
       toEmail: currentUser.email,
       emailSubject: fileName.replace('.pdf',''),
       emailBody: `Relatório do jogo ${currentUser.escalao} vs ${g.opponent} — ${formatDatePT(g.date)}.`
     });
+  };
+  document.getElementById('sendPdfWhats').onclick = ()=>{
+    closeSheet();
+    shareOrEmailPDF(buildJogoPDF(g), fileName);
   };
 }
 
