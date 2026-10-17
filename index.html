@@ -198,6 +198,11 @@ main{flex:1;padding:0 20px 130px 20px;max-width:560px;width:100%;margin:0 auto;}
 /* ---- lembrar-me ---- */
 .remember-row{display:flex;align-items:center;gap:10px;margin-top:14px;font-size:13.5px;color:var(--muted);text-align:left;cursor:pointer;}
 .remember-row input{width:18px;height:18px;accent-color:var(--gold);flex-shrink:0;margin:0;}
+
+/* ---- selecionar todos (presenças) ---- */
+.bulk-row{display:flex;align-items:center;gap:8px;margin:-4px 0 8px 0;flex-wrap:wrap;}
+.bulk-row .ghost-btn{font-family:inherit;}
+.bulk-row .att-count{margin-left:auto;font-size:12.5px;font-weight:700;color:var(--muted);}
 </style>
 </head>
 <body>
@@ -912,6 +917,11 @@ function openAttendanceSheet(trainingId){
 
   openSheetRaw(`
     <h2>Presenças — ${formatDatePT(t.date)}</h2>
+    <div class="bulk-row">
+      <button type="button" class="ghost-btn" id="attAll">✓ Selecionar todos</button>
+      <button type="button" class="ghost-btn" id="attNone">Limpar</button>
+      <span class="att-count" id="attCount"></span>
+    </div>
     <div id="attendList">
       ${userData.players.map(p=>`
         <div class="attend-row">
@@ -929,6 +939,26 @@ function openAttendanceSheet(trainingId){
   `);
 
   document.getElementById('aCancel').onclick = closeSheet;
+
+  /* selecionar todos / limpar + contador */
+  function updateAttCount(){
+    const present = userData.players.filter(p=> t.attendance[p.id]).length;
+    document.getElementById('attCount').textContent = `${present}/${userData.players.length} presentes`;
+  }
+  function setAllAttendance(value){
+    userData.players.forEach(p=>{ t.attendance[p.id] = value; });
+    document.querySelectorAll('#attendList .attend-toggle').forEach(tg=>{
+      tg.querySelector('.absent-btn').classList.toggle('on', !value);
+      tg.querySelector('.absent-btn').classList.toggle('absent', !value);
+      tg.querySelector('.present-btn').classList.toggle('on', value);
+      tg.querySelector('.present-btn').classList.toggle('present', value);
+    });
+    updateAttCount();
+  }
+  document.getElementById('attAll').onclick = ()=> setAllAttendance(true);
+  document.getElementById('attNone').onclick = ()=> setAllAttendance(false);
+  document.getElementById('attendList').addEventListener('click', updateAttCount);
+  updateAttCount();
   document.querySelectorAll('.attend-toggle').forEach(tg=>{
     const pid = tg.dataset.player;
     tg.querySelectorAll('button').forEach(btn=>{
@@ -1116,6 +1146,11 @@ function openGameSheet(gameId){
     <h2>vs ${escapeHtml(g.opponent)} — ${formatDatePT(g.date)}</h2>
     <p style="color:var(--muted);font-size:13px;margin-top:-10px;">${g.home?'Jogo em casa':'Jogo fora'}</p>
     <div class="field-label">Convocados e golos</div>
+    <div class="bulk-row">
+      <button type="button" class="ghost-btn" id="callAll">✓ Convocar todos</button>
+      <button type="button" class="ghost-btn" id="callNone">Limpar</button>
+      <span class="att-count" id="callCount"></span>
+    </div>
     <div id="callupList">
       ${userData.players.map(p=>`
         <div class="attend-row">
@@ -1157,6 +1192,33 @@ function openGameSheet(gameId){
   document.querySelectorAll('.goal-input').forEach(inp=>{
     inp.oninput = ()=>{ g.goals[inp.dataset.goal] = parseInt(inp.value)||0; };
   });
+
+  /* convocar todos / limpar + contador */
+  function updateCallCount(){
+    const n = userData.players.filter(p=> g.calledUp[p.id]).length;
+    document.getElementById('callCount').textContent = `${n}/${userData.players.length} convocados`;
+  }
+  function setAllCalledUp(value){
+    userData.players.forEach(p=>{
+      g.calledUp[p.id] = value;
+      if(!value) g.goals[p.id] = 0;
+    });
+    document.querySelectorAll('#callupList .attend-toggle').forEach(tg=>{
+      const pid = tg.dataset.player;
+      tg.querySelector('.no-btn').classList.toggle('on', !value);
+      tg.querySelector('.no-btn').classList.toggle('no', !value);
+      tg.querySelector('.yes-btn').classList.toggle('on', value);
+      tg.querySelector('.yes-btn').classList.toggle('yes', value);
+      const goalInput = document.querySelector(`.goal-input[data-goal="${pid}"]`);
+      goalInput.disabled = !value;
+      if(!value) goalInput.value = 0;
+    });
+    updateCallCount();
+  }
+  document.getElementById('callAll').onclick = ()=> setAllCalledUp(true);
+  document.getElementById('callNone').onclick = ()=> setAllCalledUp(false);
+  document.getElementById('callupList').addEventListener('click', updateCallCount);
+  updateCallCount();
 
   document.getElementById('gClose').onclick = closeSheet;
   document.getElementById('gFinish').onclick = async ()=>{
