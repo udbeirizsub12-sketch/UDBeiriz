@@ -218,6 +218,13 @@ main{flex:1;padding:0 20px 130px 20px;max-width:560px;width:100%;margin:0 auto;}
 .home-blank{display:flex;justify-content:center;padding:64px 0 0 0;}
 .home-logo{width:84px;height:auto;opacity:.92;filter:drop-shadow(0 6px 16px rgba(0,0,0,0.45));}
 #screenApp header .crest, #screenApp header .htxt{cursor:pointer;}
+
+/* ---- acessos da equipa ---- */
+.member-row{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,0.06);}
+.member-row:last-child{border-bottom:none;}
+.member-row .mname{font-size:14.5px;font-weight:700;}
+.member-row .memail{font-size:12px;color:var(--muted);word-break:break-all;}
+.btn-danger{background:rgba(255,93,108,0.14);color:var(--danger);border:1px solid rgba(255,93,108,0.35);}
 </style>
 </head>
 <body>
@@ -251,6 +258,7 @@ main{flex:1;padding:0 20px 130px 20px;max-width:560px;width:100%;margin:0 auto;}
     <div class="brand-title">União Desportiva Beiriz</div>
     <div class="brand-sub">Novo utilizador</div>
     <div class="auth-card">
+      <p class="hint-text" style="margin:0 0 14px 0;text-align:left;">Esta é a conta principal da equipa. Depois, em Definições, podes criar acessos para os outros diretores.</p>
       <div class="field-label">Nome de utilizador</div>
       <input type="text" id="regUser" autocomplete="username">
       <div class="field-label">Palavra-passe</div>
@@ -455,25 +463,54 @@ function errMsg(code){
     email:'O email não é válido ou não foi possível enviá-lo.',
     notfound:'Utilizador não encontrado.',
     server:'Erro no servidor. Tenta de novo.',
-    quota:'Foi atingido o limite diário de emails. Tenta amanhã.'
+    quota:'Foi atingido o limite diário de emails. Tenta amanhã.',
+    forbidden:'Só a conta principal da equipa pode gerir acessos.',
+    limit:'Atingiste o número máximo de acessos desta equipa.'
   };
   return m[code] || 'Ocorreu um erro. Tenta de novo.';
 }
 
-async function loadUserData(username){
-  const r = await api('loadData', Object.assign(auth(), {target: username}));
-  if(!r.ok) throw new Error(r.error || 'server');
-  userData = Object.assign(emptyData(), r.data || {});
+let dataRev = 0;          // versão dos dados que esta app tem
+let baseIds = {};         // o que esta app tinha quando carregou (para a junção no servidor)
+let lastLoadAt = 0;
+
+function adoptData(d){
+  userData = Object.assign(emptyData(), d || {});
   ['players','trainings','games','mensalidades'].forEach(k=>{ if(!Array.isArray(userData[k])) userData[k] = []; });
   if(!userData.settings || typeof userData.settings !== 'object') userData.settings = {birthdayAlerts:false};
 }
+function snapshotIds(){
+  baseIds = {};
+  ['players','trainings','games','mensalidades'].forEach(k=>{ baseIds[k] = userData[k].map(x=>x.id); });
+}
+function resetData(){ userData = emptyData(); dataRev = 0; baseIds = {}; }
 
-/* gravações em fila: cada uma envia o estado mais recente */
+async function loadUserData(username){
+  const r = await api('loadData', Object.assign(auth(), {target: username}));
+  if(!r.ok) throw new Error(r.error || 'server');
+  adoptData(r.data);
+  dataRev = Number(r.data && r.data.rev) || 0;
+  snapshotIds();
+  lastLoadAt = Date.now();
+}
+
+/* gravações em fila; se outra pessoa da equipa gravou entretanto, o servidor junta as duas versões */
 let saveChain = Promise.resolve();
 function saveUserData(){
   const p = saveChain.then(async ()=>{
-    const r = await api('saveData', Object.assign(auth(), {target: currentUser.username, data: userData}));
+    const r = await api('saveData', Object.assign(auth(), {target: currentUser.username, data: userData, baseRev: dataRev, baseIds}));
     if(!r.ok) throw new Error(r.error || 'server');
+    dataRev = r.rev;
+    if(r.merged && r.data){
+      adoptData(r.data);
+      /* outra pessoa da equipa tinha gravado entretanto: mostra já a versão junta */
+      if(document.getElementById('screenApp').classList.contains('active') && !document.getElementById('overlay').classList.contains('show') && currentTab !== 'definicoes'){
+        render();
+        showToast('Atualizado com alterações de outro diretor');
+      }
+    }
+    snapshotIds();
+    lastLoadAt = Date.now();
   });
   saveChain = p.catch(()=>{});
   return p;
@@ -584,7 +621,7 @@ document.getElementById('btnRegister').onclick = async ()=>{
   session = {username, password};
   isAdminSession = false;
   currentUser = r.user;
-  userData = emptyData();
+  resetData();
   enterApp();
   showToast(r.emailSent ? 'Conta criada — email enviado para ' + email : 'Conta criada (não foi possível enviar o email)', !r.emailSent);
 };
@@ -594,7 +631,7 @@ document.getElementById('btnRegister').onclick = async ()=>{
    =================================================================== */
 function fillAdminSelect(selected){
   const sel = document.getElementById('adminUserSelect');
-  sel.innerHTML = adminUsers.map(a=>`<option value="${escapeHtml(a.username)}" ${a.username===selected?'selected':''}>${escapeHtml(a.username)} — ${escapeHtml(a.escalao)}</option>`).join('');
+  sel.innerHTML = adminUsers.map(a=>`<option value="${escapeHtml(a.username)}" ${a.username===selected?'selected':''}>${escapeHtml(a.username)} — ${escapeHtml(a.escalao)}${a.owner ? ' (acesso de ' + escapeHtml(a.owner) + ')' : ''}</option>`).join('');
 }
 
 async function enterAdminMode(){
@@ -626,7 +663,7 @@ function enterApp(){
 document.getElementById('btnLogout').onclick = ()=>{
   clearRemembered();
   document.getElementById('rememberMe').checked = false;
-  session = null; currentUser = null; isAdminSession = false; adminUsers = []; userData = emptyData();
+  session = null; currentUser = null; isAdminSession = false; adminUsers = []; resetData();
   document.getElementById('loginUser').value = ''; document.getElementById('loginPass').value = '';
   document.getElementById('loginErr').textContent = '';
   showScreen('screenLogin');
@@ -1491,16 +1528,113 @@ function renderDefinicoes(wrap){
       <div class="field-label">Palavra-passe</div>
       <div class="pw-wrap"><input type="password" id="defPass" value="${escapeHtml(currentUser.password)}"><button type="button" class="pw-eye" aria-label="Mostrar palavra-passe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
       <div class="field-label">Escalão</div>
-      <input type="text" id="defEscalao" value="${escapeHtml(currentUser.escalao)}">
+      <input type="text" id="defEscalao" value="${escapeHtml(currentUser.escalao)}" ${currentUser.owner ? 'disabled' : ''}>
       <div class="field-label">Email</div>
       <input type="email" id="defEmail" value="${escapeHtml(currentUser.email)}">
       <div class="err-msg" id="defErr"></div>
       <button class="btn btn-primary" id="defSave" style="margin-top:16px;">GRAVAR</button>
     </div>
+    <div class="card" id="teamCard" style="margin-top:12px;"></div>
     <div class="card" id="bdayCard" style="margin-top:12px;"></div>
   `;
   document.getElementById('defSave').onclick = saveDefinicoes;
+  paintTeamCard();
   paintBdayCard();
+}
+
+/* cartão "Acessos da equipa": a conta principal cria e gere os acessos dos outros diretores */
+async function paintTeamCard(){
+  const box = document.getElementById('teamCard');
+  if(!box) return;
+  if(currentUser.owner){
+    box.innerHTML = `
+      <div class="card-title">👥 Equipa</div>
+      <div class="card-sub" style="line-height:1.55;">O teu acesso está ligado à conta principal <b>${escapeHtml(currentUser.owner)}</b>. O plantel, os treinos, os jogos e as mensalidades são partilhados com toda a equipa.</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="card-title">👥 Acessos da equipa</div><div class="card-sub">A carregar…</div>`;
+  const r = await api('listMembers', Object.assign(auth(), {target: currentUser.username}));
+  if(document.getElementById('teamCard') !== box) return;     // entretanto mudou de ecrã
+  if(!r.ok){ box.innerHTML = `<div class="card-title">👥 Acessos da equipa</div><div class="err-msg">${escapeHtml(errMsg(r.error))}</div>`; return; }
+  const max = r.max || 10;
+  box.innerHTML = `
+    <div class="card-title">👥 Acessos da equipa</div>
+    <div class="card-sub" style="line-height:1.55;">Cria um utilizador e palavra-passe para cada diretor. Todos veem e editam o mesmo plantel, treinos, jogos e mensalidades.</div>
+    <div style="margin-top:8px;">
+      ${r.members.length === 0 ? '<div class="bday-line">Ainda não criaste nenhum acesso adicional.</div>' : r.members.map(m=>`
+        <div class="member-row">
+          <div style="flex:1;min-width:0;"><div class="mname">${escapeHtml(m.username)}</div><div class="memail">${escapeHtml(m.email)}</div></div>
+          <button type="button" class="icon-btn" data-member="${escapeHtml(m.username)}" aria-label="Editar acesso">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+          </button>
+        </div>`).join('')}
+    </div>
+    <div style="margin-top:14px;">
+      <button type="button" class="btn btn-secondary" id="addMemberBtn" ${r.members.length >= max ? 'disabled' : ''}>+ Adicionar acesso</button>
+      <div class="bday-line">${r.members.length}/${max} acessos adicionais</div>
+    </div>`;
+  document.getElementById('addMemberBtn').onclick = ()=> openMemberSheet(null);
+  box.querySelectorAll('[data-member]').forEach(el=>{
+    el.onclick = ()=> openMemberSheet(r.members.find(m=>m.username === el.dataset.member));
+  });
+}
+
+function openMemberSheet(member){
+  const eye = '<button type="button" class="pw-eye" aria-label="Mostrar palavra-passe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>';
+  openSheetRaw(`
+    <h2>${member ? 'Editar acesso' : 'Novo acesso'}</h2>
+    <div class="field-label">Nome de utilizador</div>
+    <input type="text" id="mbUser" autocomplete="off" value="${escapeHtml(member ? member.username : '')}">
+    <div class="field-label">Palavra-passe</div>
+    <div class="pw-wrap"><input type="password" id="mbPass" autocomplete="new-password" value="${escapeHtml(member ? member.password : '')}">${eye}</div>
+    <div class="field-label">Email</div>
+    <input type="email" id="mbEmail" value="${escapeHtml(member ? member.email : '')}" placeholder="nome@exemplo.com">
+    <div class="err-msg" id="mbErr"></div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" id="mbCancel">Cancelar</button>
+      <button class="btn-save" id="mbSave">Guardar</button>
+    </div>
+    ${member ? '<div class="stack" style="margin-top:12px;"><button type="button" class="btn btn-danger" id="mbRemove">Remover este acesso</button></div>' : ''}
+  `);
+  document.getElementById('mbCancel').onclick = closeSheet;
+  document.getElementById('mbSave').onclick = async ()=>{
+    const m = {
+      username: document.getElementById('mbUser').value.trim(),
+      password: document.getElementById('mbPass').value,
+      email: document.getElementById('mbEmail').value.trim()
+    };
+    const errEl = document.getElementById('mbErr');
+    errEl.textContent = '';
+    if(!m.username || !m.password || !m.email){ errEl.textContent = errMsg('missing'); return; }
+    const btn = document.getElementById('mbSave');
+    btn.disabled = true; btn.textContent = 'A guardar...';
+    const payload = member ? Object.assign({current: member.username}, m) : m;
+    const r = await api(member ? 'updateMember' : 'addMember', Object.assign(auth(), {target: currentUser.username, member: payload}));
+    btn.disabled = false; btn.textContent = 'Guardar';
+    if(!r.ok){ errEl.textContent = errMsg(r.error); return; }
+    closeSheet();
+    showToast(r.emailSent ? (member ? 'Acesso atualizado — email enviado' : 'Acesso criado — email enviado') : (member ? 'Acesso atualizado' : 'Acesso criado (não foi possível enviar o email)'), !r.emailSent);
+    paintTeamCard();
+  };
+  if(member){
+    document.getElementById('mbRemove').onclick = ()=>{
+      openSheetRaw(`
+        <h2>Remover acesso?</h2>
+        <p style="color:var(--muted);font-size:14px;line-height:1.55;margin-top:-6px;"><b>${escapeHtml(member.username)}</b> deixa de poder entrar na app. Os dados da equipa não são apagados.</p>
+        <div class="sheet-actions">
+          <button class="btn-cancel" id="rmNo">Cancelar</button>
+          <button class="btn-save" id="rmYes" style="background:var(--danger);color:#2b0409;">Remover</button>
+        </div>`);
+      document.getElementById('rmNo').onclick = closeSheet;
+      document.getElementById('rmYes').onclick = async ()=>{
+        const r = await api('removeMember', Object.assign(auth(), {target: currentUser.username, member: {current: member.username}}));
+        closeSheet();
+        if(!r.ok){ showToast(errMsg(r.error), true); return; }
+        showToast('Acesso removido');
+        paintTeamCard();
+      };
+    };
+  }
 }
 
 /* cartão "Aviso de aniversários" (opcional) */
@@ -1583,6 +1717,13 @@ async function saveDefinicoes(){
   showToast(r.emailSent ? 'Dados atualizados — email enviado' : 'Dados atualizados (não foi possível enviar o email)', !r.emailSent);
 }
 
+
+document.addEventListener('visibilitychange', async ()=>{
+  if(document.visibilityState !== 'visible' || !session || !currentUser) return;
+  if(document.getElementById('overlay').classList.contains('show')) return;
+  if(Date.now() - lastLoadAt < 20000) return;
+  try{ await saveChain; await loadUserData(currentUser.username); render(); }catch(e){}
+});
 
 ['#screenApp header .crest', '#screenApp header .htxt'].forEach(sel=>{
   const el = document.querySelector(sel);
