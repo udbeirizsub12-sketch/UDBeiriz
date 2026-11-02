@@ -225,6 +225,17 @@ main{flex:1;padding:0 20px 130px 20px;max-width:560px;width:100%;margin:0 auto;}
 .member-row .mname{font-size:14.5px;font-weight:700;}
 .member-row .memail{font-size:12px;color:var(--muted);word-break:break-all;}
 .btn-danger{background:rgba(255,93,108,0.14);color:var(--danger);border:1px solid rgba(255,93,108,0.35);}
+
+/* ---- convocados / cartaz ---- */
+input[type=time]{width:100%;background:var(--bg-0);border:1.5px solid rgba(255,255,255,0.1);border-radius:13px;padding:13px 14px;color:var(--white);font-family:inherit;font-size:15.5px;-webkit-appearance:none;}
+input[type=time]:focus{outline:none;border-color:var(--gold);}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.conv-block{margin-top:12px;}
+.conv-block .field-label:first-of-type{margin-top:12px;}
+.conv-block input, .conv-block select{margin-bottom:2px;}
+.attend-toggle button:disabled{opacity:.6;cursor:default;}
+.poster-wrap canvas{display:block;width:100%;height:auto;aspect-ratio:4/5;border-radius:14px;box-shadow:0 18px 40px -18px rgba(0,0,0,0.7);margin:12px 0 14px 0;background:#0a1f2b;}
+.conv-status{font-size:12px;color:var(--muted);margin-top:8px;min-height:16px;text-align:right;}
 </style>
 </head>
 <body>
@@ -320,6 +331,7 @@ main{flex:1;padding:0 20px 130px 20px;max-width:560px;width:100%;margin:0 auto;}
     <div class="tab" data-tab="presencas">Presenças</div>
     <div class="tab" data-tab="jogos">Jogos</div>
     <div class="tab" data-tab="mensalidades">Mensalidades</div>
+    <div class="tab" data-tab="convocados">Convocados</div>
     <div class="tab" data-tab="definicoes">Definições</div>
   </div>
 
@@ -754,6 +766,7 @@ function render(){
   else if(currentTab==='presencas') renderPresencas(subhead, wrap, fab);
   else if(currentTab==='jogos') renderJogos(subhead, wrap, fab);
   else if(currentTab==='mensalidades') renderMensalidades(subhead, wrap, fab);
+  else if(currentTab==='convocados'){ fab.style.display='none'; renderConvocados(wrap); }
   else if(currentTab==='definicoes'){ fab.style.display='none'; renderDefinicoes(wrap); }
 }
 
@@ -833,7 +846,7 @@ function fallbackDownloadBlob(blob, fileName){
   a.href = url; a.download = fileName;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 4000);
-  showToast('PDF transferido — anexa-o no WhatsApp ou no email');
+  showToast('Ficheiro transferido — anexa-o no WhatsApp ou no email');
 }
 
 
@@ -1514,6 +1527,446 @@ function openNewMensalidadeSheet(){
       subject: `UDB ${currentUser.escalao} — Mensalidade de ${player.name}`,
       bodyText: `Nova mensalidade registada:\n\nJogador: ${player.name}\nData: ${formatDatePT(date)}\nValor entregue: ${amount.toFixed(2)} €`
     }).then(()=> showToast('Guardado — email enviado')).catch(e=>{ console.error(e); showToast('Guardado, mas o email falhou', true); });
+  };
+}
+
+/* ===================================================================
+   MENU — CONVOCADOS (cartaz do jogo)
+   =================================================================== */
+const POSTER_W = 1080, POSTER_H = 1350;
+const POSTER_FONT = "'Poppins','Segoe UI','Helvetica Neue',Arial,sans-serif";
+
+/* a convocatória atual fica guardada nos dados da equipa (partilhada pelos diretores) */
+function getConv(){
+  if(!userData.settings || typeof userData.settings !== 'object') userData.settings = {birthdayAlerts:false};
+  if(!userData.settings.convocatoria || typeof userData.settings.convocatoria !== 'object'){
+    userData.settings.convocatoria = {date:'', place:'', meet:'', time:'', captain:'', vice:'', called:{}};
+  }
+  const c = userData.settings.convocatoria;
+  if(!c.called || typeof c.called !== 'object') c.called = {};
+  const ids = new Set(userData.players.map(p=>p.id));
+  if(c.captain && !ids.has(c.captain)) c.captain = '';
+  if(c.vice && !ids.has(c.vice)) c.vice = '';
+  if(c.captain && c.captain === c.vice) c.vice = '';
+  return c;
+}
+
+function sortedPlayers(){
+  return userData.players.slice().sort((a,b)=> ((Number(a.number)||999) - (Number(b.number)||999)) || String(a.name).localeCompare(String(b.name), 'pt'));
+}
+
+function formatGameDate(iso){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(iso || '')) return '';
+  const [y,m,d] = iso.split('-').map(Number);
+  const s = new Date(y, m-1, d).toLocaleDateString('pt-PT', {weekday:'long', day:'2-digit', month:'2-digit', year:'numeric'});
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function formatTimePT(t){ return /^\d{2}:\d{2}$/.test(t || '') ? t.replace(':', 'h') : ''; }
+
+/* o que vai escrito no cartaz */
+function posterData(){
+  const c = getConv();
+  const byId = {}; userData.players.forEach(p=>{ byId[p.id] = p; });
+  return {
+    date: formatGameDate(c.date),
+    place: String(c.place || '').trim(),
+    meet: formatTimePT(c.meet),
+    time: formatTimePT(c.time),
+    captain: c.captain && byId[c.captain] ? byId[c.captain].name : '',
+    vice: c.vice && byId[c.vice] ? byId[c.vice].name : '',
+    others: sortedPlayers().filter(p=> c.called[p.id] && p.id !== c.captain && p.id !== c.vice).map(p=>({name:p.name, number:p.number}))
+  };
+}
+
+/* ---------- desenho do cartaz ---------- */
+function fitFont(ctx, text, style, maxW, size, minSize){
+  let s = size;
+  for(; s > minSize; s -= 2){
+    ctx.font = `${style} ${s}px ${POSTER_FONT}`;
+    if(ctx.measureText(text).width <= maxW) break;
+  }
+  ctx.font = `${style} ${s}px ${POSTER_FONT}`;
+  return s;
+}
+function ellipsize(ctx, text, maxW){
+  if(ctx.measureText(text).width <= maxW) return text;
+  let t = text;
+  while(t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+  return t + '…';
+}
+
+function wrapLines(ctx, text, maxW, maxLines){
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const lines = []; let cur = '';
+  for(let i = 0; i < words.length; i++){
+    const test = cur ? cur + ' ' + words[i] : words[i];
+    if(!cur || ctx.measureText(test).width <= maxW){ cur = test; }
+    else{
+      if(lines.length === maxLines - 1){ cur = [cur].concat(words.slice(i)).join(' '); break; }
+      lines.push(cur); cur = words[i];
+    }
+  }
+  if(cur) lines.push(cur);
+  return lines.map((ln, i)=> i === lines.length - 1 ? ellipsize(ctx, ln, maxW) : ln);
+}
+
+/* decide como escrever um valor: numa linha (até ao tamanho 34) ou partido em linhas */
+function valueLayout(ctx, text, maxW, maxLines){
+  const size = fitFont(ctx, text, 'bold', maxW, 42, 34);
+  if(ctx.measureText(text).width <= maxW) return {lines:[text], size};
+  if(maxLines === 1) return {lines:[ellipsize(ctx, text, maxW)], size};
+  ctx.font = `bold 30px ${POSTER_FONT}`;
+  return {lines: wrapLines(ctx, text, maxW, maxLines), size:30};
+}
+
+function drawPoster(canvas, data, crest){
+  const ctx = canvas.getContext('2d');
+  if(!ctx) return;
+  const W = POSTER_W, H = POSTER_H, M = 72;
+  const GOLD = '#ffd400', BLUE = '#5cc0e0', WHITE = '#f4fbff', MUTED = 'rgba(244,251,255,0.38)';
+  ctx.clearRect(0, 0, W, H);
+
+  /* fundo */
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, '#05121a'); bg.addColorStop(0.55, '#0a2233'); bg.addColorStop(1, '#06151f');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(W*0.92, 0, 0, W*0.92, 0, 700);
+  glow.addColorStop(0, 'rgba(92,192,224,0.17)'); glow.addColorStop(1, 'rgba(92,192,224,0)');
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+  const glow2 = ctx.createRadialGradient(0, H*0.55, 0, 0, H*0.55, 700);
+  glow2.addColorStop(0, 'rgba(92,192,224,0.10)'); glow2.addColorStop(1, 'rgba(92,192,224,0)');
+  ctx.fillStyle = glow2; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(92,192,224,0.07)'; ctx.lineWidth = 2;
+  [[-100,420,520,-100],[-100,760,860,-100],[200,H+80,W+80,380],[-80,1100,640,H+100]].forEach(l=>{
+    ctx.beginPath(); ctx.moveTo(l[0], l[1]); ctx.lineTo(l[2], l[3]); ctx.stroke();
+  });
+
+  ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+
+  /* cabeçalho: brasão + nome do clube */
+  let tx = M;
+  if(crest && crest.width){
+    const ch = 132, cw = ch * crest.width / crest.height;
+    ctx.drawImage(crest, M, 56, cw, ch);
+    tx = M + cw + 30;
+  }
+  ctx.fillStyle = WHITE;
+  ctx.font = `bold 46px ${POSTER_FONT}`;
+  ctx.fillText('UNIÃO DESPORTIVA', tx, 112);
+  ctx.fillText('DE BEIRIZ', tx, 168);
+  ctx.fillStyle = GOLD; ctx.fillRect(M, 232, 96, 8);
+
+  /* título */
+  ctx.fillStyle = GOLD;
+  fitFont(ctx, 'CONVOCADOS', 'italic bold', W - 2*M, 120, 70);
+  ctx.fillText('CONVOCADOS', M, 360);
+
+  /* dados do jogo (2 x 2) */
+  const colW = (W - 2*M - 40) / 2;
+  const cellDefs = [
+    {label:'DIA DO JOGO', value:data.date, x:M, y:432, maxLines:2},
+    {label:'LOCAL DO JOGO', value:data.place, x:M + colW + 40, y:432, maxLines:3},
+    {label:'HORA DA CONCENTRAÇÃO', value:data.meet, x:M, y:560, maxLines:1},
+    {label:'HORA DO JOGO', value:data.time, x:M + colW + 40, y:560, maxLines:1}
+  ];
+  /* o local pode precisar de 3 linhas: nesse caso o resto do cartaz desce um pouco */
+  const layouts = cellDefs.map(c=> c.value ? valueLayout(ctx, c.value, colW, c.maxLines) : null);
+  const row1Lines = Math.max(layouts[0] ? layouts[0].lines.length : 0, layouts[1] ? layouts[1].lines.length : 0);
+  const extra = Math.max(0, row1Lines - 2) * 36;
+  cellDefs.forEach((c, idx)=>{
+    const y = c.y + (idx >= 2 ? extra : 0);
+    ctx.fillStyle = GOLD; ctx.font = `bold 23px ${POSTER_FONT}`;
+    ctx.fillText(c.label, c.x, y);
+    const L = layouts[idx];
+    if(L){
+      ctx.fillStyle = WHITE; ctx.font = `bold ${L.size}px ${POSTER_FONT}`;
+      const first = (L.lines.length === 1 && L.size > 30) ? 54 : 48;
+      L.lines.forEach((ln, i)=> ctx.fillText(ln, c.x, y + first + i * 36));
+    }else{
+      ctx.fillStyle = MUTED; ctx.font = `bold 42px ${POSTER_FONT}`;
+      ctx.fillText('—', c.x, y + 54);
+    }
+  });
+
+  ctx.fillStyle = 'rgba(255,212,0,0.55)'; ctx.fillRect(M, 664 + extra, W - 2*M, 3);
+
+  /* capitão e sub-capitão */
+  [['Capitão:', data.captain, 742 + extra], ['Sub-capitão:', data.vice, 818 + extra]].forEach(r=>{
+    ctx.fillStyle = GOLD; ctx.font = `bold 38px ${POSTER_FONT}`;
+    ctx.fillText(r[0], M, r[2]);
+    const lx = M + ctx.measureText(r[0]).width + 24;
+    if(r[1]){
+      ctx.fillStyle = WHITE;
+      fitFont(ctx, r[1], 'bold', W - M - lx, 48, 26);
+      ctx.fillText(ellipsize(ctx, r[1], W - M - lx), lx, r[2]);
+    }else{
+      ctx.fillStyle = MUTED; ctx.font = `bold 44px ${POSTER_FONT}`;
+      ctx.fillText('—', lx, r[2]);
+    }
+    ctx.fillStyle = 'rgba(244,251,255,0.14)'; ctx.fillRect(M, r[2] + 16, W - 2*M, 2);
+  });
+
+  /* restantes convocados */
+  const others = data.others;
+  const top = 886 + extra, bottom = 1220;
+  if(others.length){
+    const cols = others.length > 6 ? 2 : 1;
+    const rows = Math.ceil(others.length / cols);
+    const lineH = Math.min(58, (bottom - top) / rows);
+    const fs = Math.max(18, Math.min(38, Math.floor(lineH * 0.62)));
+    const cw = cols === 1 ? W - 2*M : (W - 2*M - 40) / 2;
+    others.forEach((p, i)=>{
+      const col = cols === 1 ? 0 : Math.floor(i / rows);
+      const row = cols === 1 ? i : i % rows;
+      const x = M + col * (cw + 40);
+      const y = top + row * lineH + lineH * 0.72;
+      const num = (p.number != null && String(p.number).trim() !== '') ? String(p.number).trim() : '•';
+      ctx.fillStyle = GOLD; ctx.font = `bold ${fs}px ${POSTER_FONT}`;
+      ctx.fillText(num, x, y);
+      const nx = x + Math.max(fs * 1.9, 54);
+      ctx.fillStyle = WHITE;
+      fitFont(ctx, p.name, 'bold', cw - (nx - x), fs, 16);
+      ctx.fillText(ellipsize(ctx, p.name, cw - (nx - x)), nx, y);
+      ctx.fillStyle = 'rgba(244,251,255,0.10)'; ctx.fillRect(x, y + lineH * 0.2, cw, 2);
+    });
+  }
+
+  /* rodapé */
+  ctx.fillStyle = GOLD; ctx.textAlign = 'center';
+  ctx.font = `italic bold 66px ${POSTER_FONT}`;
+  ctx.fillText('Força UDB!', W/2, 1300);
+  ctx.textAlign = 'left';
+}
+
+let crestPromise = null;
+function loadCrest(){
+  if(crestPromise) return crestPromise;
+  crestPromise = new Promise(resolve=>{
+    const el = document.querySelector('#screenApp header .crest');
+    if(!el || !el.src){ resolve(null); return; }
+    const img = new Image();
+    const timer = setTimeout(()=>resolve(null), 2500);
+    img.onload = ()=>{ clearTimeout(timer); resolve(img); };
+    img.onerror = ()=>{ clearTimeout(timer); resolve(null); };
+    img.src = el.src;
+  }).then(img=>{ if(!img) crestPromise = null; return img; });
+  return crestPromise;
+}
+
+async function redrawPoster(){
+  const canvas = document.getElementById('posterCanvas');
+  if(!canvas) return;
+  const crest = await loadCrest();
+  if(document.getElementById('posterCanvas') !== canvas) return;
+  drawPoster(canvas, posterData(), crest);
+}
+let posterTimer;
+function schedulePoster(){ clearTimeout(posterTimer); posterTimer = setTimeout(redrawPoster, 60); }
+
+/* grava sozinho, pouco depois de cada alteração */
+let convSaveTimer;
+function setConvStatus(msg, err){
+  const el = document.getElementById('cvStatus');
+  if(el){ el.textContent = msg; el.style.color = err ? 'var(--danger)' : 'var(--muted)'; }
+}
+function scheduleConvSave(){
+  setConvStatus('A guardar…');
+  clearTimeout(convSaveTimer);
+  convSaveTimer = setTimeout(async ()=>{
+    try{ await saveUserData(); setConvStatus('✓ Guardado'); }
+    catch(e){ setConvStatus('Falha ao guardar — verifica a ligação', true); }
+  }, 700);
+}
+
+/* ---------- ecrã ---------- */
+function renderConvocados(wrap){
+  if(userData.players.length === 0){
+    wrap.innerHTML = `<div class="empty-state"><div class="big">📣</div><p>Ainda não há jogadores no plantel.<br>Adiciona primeiro os jogadores no Plantel para fazeres a convocatória.</p></div>`;
+    return;
+  }
+  const c = getConv();
+  const players = sortedPlayers();
+  const label = p => `${p.number!=null && String(p.number).trim()!=='' ? p.number + ' · ' : ''}${p.name}`;
+  const opts = (exclude, selected) => `<option value="">— escolher —</option>` + players.filter(p=>p.id !== exclude)
+    .map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${escapeHtml(label(p))}</option>`).join('');
+  const calledCount = () => players.filter(p=> c.called[p.id] || p.id === c.captain || p.id === c.vice).length;
+
+  wrap.innerHTML = `
+    <div class="card conv-block" style="margin-top:0;">
+      <div class="card-title">Dados do jogo</div>
+      <div class="field-label">Dia do jogo</div>
+      <input type="date" id="cvDate" value="${escapeHtml(c.date)}">
+      <div class="field-label">Local do jogo</div>
+      <input type="text" id="cvPlace" value="${escapeHtml(c.place)}" placeholder="Ex: Campo de Jogos de Beiriz">
+      <div class="two-col">
+        <div><div class="field-label">Hora da concentração</div><input type="time" id="cvMeet" value="${escapeHtml(c.meet)}"></div>
+        <div><div class="field-label">Hora do jogo</div><input type="time" id="cvTime" value="${escapeHtml(c.time)}"></div>
+      </div>
+    </div>
+
+    <div class="card conv-block">
+      <div class="card-title">Capitão e sub-capitão</div>
+      <div class="field-label">Capitão</div>
+      <select id="cvCaptain">${opts(c.vice, c.captain)}</select>
+      <div class="field-label">Sub-capitão</div>
+      <select id="cvVice">${opts(c.captain, c.vice)}</select>
+    </div>
+
+    <div class="card conv-block">
+      <div class="card-title">Convocados</div>
+      <div class="bulk-row" style="margin-top:10px;">
+        <button type="button" class="ghost-btn" id="cvAll">✓ Convocar todos</button>
+        <button type="button" class="ghost-btn" id="cvNone">Limpar</button>
+        <span class="att-count" id="cvCount"></span>
+      </div>
+      <div id="cvList">
+        ${players.map(p=>{
+          const isCap = p.id === c.captain, isVice = p.id === c.vice, locked = isCap || isVice;
+          const on = locked || !!c.called[p.id];
+          const badge = isCap ? ' <span class="tag count-tag">Capitão</span>' : isVice ? ' <span class="tag count-tag">Sub-capitão</span>' : '';
+          return `
+          <div class="attend-row">
+            <span class="aname">${escapeHtml(label(p))}${badge}</span>
+            <div class="attend-toggle" data-player="${p.id}" ${locked ? 'data-locked="1"' : ''}>
+              <button type="button" class="no-btn ${!on?'on no':''}" data-val="0" ${locked?'disabled':''}>Não</button>
+              <button type="button" class="yes-btn ${on?'on yes':''}" data-val="1" ${locked?'disabled':''}>Convocado</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <div class="card conv-block poster-wrap">
+      <div class="card-title">Cartaz</div>
+      <canvas id="posterCanvas" width="${POSTER_W}" height="${POSTER_H}"></canvas>
+      <button type="button" class="btn btn-primary" id="cvShare">Partilhar cartaz</button>
+      <div class="conv-status" id="cvStatus"></div>
+    </div>
+  `;
+
+  const upd = ()=>{ document.getElementById('cvCount').textContent = `${calledCount()}/${players.length} convocados`; };
+  upd();
+
+  const bind = (id, key)=>{
+    const el = document.getElementById(id);
+    const handler = ()=>{ c[key] = el.value; schedulePoster(); scheduleConvSave(); };
+    el.addEventListener('input', handler);
+    el.addEventListener('change', handler);
+  };
+  bind('cvDate', 'date'); bind('cvPlace', 'place'); bind('cvMeet', 'meet'); bind('cvTime', 'time');
+
+  document.getElementById('cvCaptain').onchange = function(){
+    c.captain = this.value;
+    if(c.captain) c.called[c.captain] = true;
+    if(c.vice === c.captain) c.vice = '';
+    scheduleConvSave(); render();
+  };
+  document.getElementById('cvVice').onchange = function(){
+    c.vice = this.value;
+    if(c.vice) c.called[c.vice] = true;
+    if(c.captain === c.vice) c.captain = '';
+    scheduleConvSave(); render();
+  };
+
+  const paintRow = (tg, on)=>{
+    tg.querySelector('.no-btn').classList.toggle('on', !on);
+    tg.querySelector('.no-btn').classList.toggle('no', !on);
+    tg.querySelector('.yes-btn').classList.toggle('on', on);
+    tg.querySelector('.yes-btn').classList.toggle('yes', on);
+  };
+  document.querySelectorAll('#cvList .attend-toggle').forEach(tg=>{
+    if(tg.dataset.locked) return;
+    const pid = tg.dataset.player;
+    tg.querySelectorAll('button').forEach(btn=>{
+      btn.onclick = ()=>{
+        c.called[pid] = btn.dataset.val === '1';
+        paintRow(tg, c.called[pid]); upd(); schedulePoster(); scheduleConvSave();
+      };
+    });
+  });
+  const setAll = value => {
+    players.forEach(p=>{ if(p.id !== c.captain && p.id !== c.vice) c.called[p.id] = value; });
+    document.querySelectorAll('#cvList .attend-toggle').forEach(tg=>{ if(!tg.dataset.locked) paintRow(tg, value); });
+    upd(); schedulePoster(); scheduleConvSave();
+  };
+  document.getElementById('cvAll').onclick = ()=> setAll(true);
+  document.getElementById('cvNone').onclick = ()=> setAll(false);
+  document.getElementById('cvShare').onclick = openShareConvSheet;
+
+  redrawPoster();
+}
+
+/* ---------- partilhar o cartaz ---------- */
+function canvasToPngBlob(canvas){
+  const b64 = canvas.toDataURL('image/png').split(',')[1];
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for(let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], {type:'image/png'});
+}
+function convFileBase(){
+  const c = getConv();
+  return 'Convocados_' + (c.date ? formatSheetName(c.date) : 'UDB');
+}
+function convEmailText(){
+  const d = posterData();
+  const lines = [
+    `Convocados — ${currentUser.escalao}`, '',
+    `Dia do jogo: ${d.date || '—'}`,
+    `Local do jogo: ${d.place || '—'}`,
+    `Hora da concentração: ${d.meet || '—'}`,
+    `Hora do jogo: ${d.time || '—'}`, '',
+    `Capitão: ${d.captain || '—'}`,
+    `Sub-capitão: ${d.vice || '—'}`, ''
+  ];
+  if(d.others.length){ lines.push('Restantes convocados:'); d.others.forEach(p=> lines.push('- ' + p.name)); }
+  lines.push('', 'Força UDB!');
+  return lines.join('\n');
+}
+function shareImageFile(blob, fileName){
+  const file = (typeof File !== 'undefined') ? new File([blob], fileName, {type:'image/png'}) : null;
+  if(file && navigator.canShare && navigator.canShare({files:[file]})){
+    navigator.share({files:[file], title:fileName}).catch((e)=>{ if(e && e.name === 'AbortError') return; fallbackDownloadBlob(blob, fileName); });
+  }else{
+    fallbackDownloadBlob(blob, fileName);
+  }
+}
+function openShareConvSheet(){
+  const canvas = document.getElementById('posterCanvas');
+  if(!canvas) return;
+  openSheetRaw(`
+    <h2>Partilhar cartaz</h2>
+    <div class="stack" style="margin-top:4px;">
+      <button class="btn btn-primary" id="cvMail">Email (PDF)<br><span style="font-size:11.5px;font-weight:600;opacity:.8;">${escapeHtml(currentUser.email)}</span></button>
+      <button class="btn btn-secondary" id="cvWhats">WhatsApp / outra app (imagem)</button>
+      <button class="btn btn-secondary" id="cvDownload">Descarregar imagem</button>
+      <button class="btn btn-ghost" id="cvClose">Fechar</button>
+    </div>
+  `);
+  document.getElementById('cvClose').onclick = closeSheet;
+  document.getElementById('cvWhats').onclick = ()=>{
+    const blob = canvasToPngBlob(canvas);
+    closeSheet();
+    shareImageFile(blob, convFileBase() + '.png');
+  };
+  document.getElementById('cvDownload').onclick = ()=>{
+    const blob = canvasToPngBlob(canvas);
+    closeSheet();
+    fallbackDownloadBlob(blob, convFileBase() + '.png');
+  };
+  document.getElementById('cvMail').onclick = async ()=>{
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({unit:'mm', format:'a4'});
+    const w = 190, hgt = w * POSTER_H / POSTER_W;
+    doc.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 10, 15, w, hgt);
+    const fileName = convFileBase() + '.pdf';
+    closeSheet();
+    showToast('A gerar PDF e a enviar...');
+    await shareOrEmailPDF(doc, fileName, {
+      toEmail: currentUser.email,
+      emailSubject: `${currentUser.escalao} — Convocados${getConv().date ? ' ' + formatDatePT(getConv().date) : ''}`,
+      emailBody: convEmailText()
+    });
   };
 }
 
