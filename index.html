@@ -236,6 +236,9 @@ input[type=time]:focus{outline:none;border-color:var(--gold);}
 .attend-toggle button:disabled{opacity:.6;cursor:default;}
 .poster-wrap canvas{display:block;width:100%;height:auto;aspect-ratio:4/5;border-radius:14px;box-shadow:0 18px 40px -18px rgba(0,0,0,0.7);margin:12px 0 14px 0;background:#0a1f2b;}
 .conv-status{font-size:12px;color:var(--muted);margin-top:8px;min-height:16px;text-align:right;}
+
+.conv-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;}
+.conv-top .ghost-btn{font-family:inherit;}
 </style>
 </head>
 <body>
@@ -363,7 +366,7 @@ let adminUsers = [];
 let userData = emptyData();
 let currentTab = 'plantel';
 
-function emptyData(){ return {players:[], trainings:[], games:[], mensalidades:[], settings:{birthdayAlerts:false}}; }
+function emptyData(){ return {players:[], trainings:[], games:[], mensalidades:[], convocatorias:[], settings:{birthdayAlerts:false}}; }
 function uid(){ return 'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 function escapeHtml(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function formatDatePT(iso){ if(!iso) return ''; const [y,m,d]=iso.split('-'); return `${d}/${m}/${y}`; }
@@ -488,14 +491,20 @@ let lastLoadAt = 0;
 
 function adoptData(d){
   userData = Object.assign(emptyData(), d || {});
-  ['players','trainings','games','mensalidades'].forEach(k=>{ if(!Array.isArray(userData[k])) userData[k] = []; });
+  ['players','trainings','games','mensalidades','convocatorias'].forEach(k=>{ if(!Array.isArray(userData[k])) userData[k] = []; });
   if(!userData.settings || typeof userData.settings !== 'object') userData.settings = {birthdayAlerts:false};
+  if(userData.settings.convocatoria && typeof userData.settings.convocatoria === 'object'){
+    if(!userData.convocatorias.some(x=>x.id === 'migrada-1')){
+      userData.convocatorias.push(Object.assign({id:'migrada-1', escalao: currentUser ? currentUser.escalao : '', createdAt: Date.now(), updatedAt: Date.now(), sharedAt: 0}, userData.settings.convocatoria));
+    }
+    delete userData.settings.convocatoria;
+  }
 }
 function snapshotIds(){
   baseIds = {};
-  ['players','trainings','games','mensalidades'].forEach(k=>{ baseIds[k] = userData[k].map(x=>x.id); });
+  ['players','trainings','games','mensalidades','convocatorias'].forEach(k=>{ baseIds[k] = userData[k].map(x=>x.id); });
 }
-function resetData(){ userData = emptyData(); dataRev = 0; baseIds = {}; }
+function resetData(){ userData = emptyData(); dataRev = 0; baseIds = {}; convEditId = null; }
 
 async function loadUserData(username){
   const r = await api('loadData', Object.assign(auth(), {target: username}));
@@ -824,9 +833,11 @@ async function shareOrEmailPDF(doc, fileName, {toEmail, emailSubject, emailBody}
         attachment: {filename: fileName, mimeType:'application/pdf', base64Data}
       });
       showToast('Email enviado para ' + toEmail);
+      return true;
     }catch(e){
       console.error(e);
       showToast('Falha ao enviar email', true);
+      return false;
     }
     return;
   }
@@ -1536,19 +1547,25 @@ function openNewMensalidadeSheet(){
 const POSTER_W = 1080, POSTER_H = 1350;
 const POSTER_FONT = "'Poppins','Segoe UI','Helvetica Neue',Arial,sans-serif";
 
-/* a convocatória atual fica guardada nos dados da equipa (partilhada pelos diretores) */
-function getConv(){
-  if(!userData.settings || typeof userData.settings !== 'object') userData.settings = {birthdayAlerts:false};
-  if(!userData.settings.convocatoria || typeof userData.settings.convocatoria !== 'object'){
-    userData.settings.convocatoria = {date:'', place:'', meet:'', time:'', captain:'', vice:'', called:{}};
-  }
-  const c = userData.settings.convocatoria;
+/* a lista de convocatórias fica guardada nos dados da equipa (partilhada pelos diretores) */
+let convEditId = null;      // convocatória aberta no editor (null = mostra a lista)
+const ESCALOES = ['Sub-6','Sub-7','Sub-8','Sub-9','Sub-10','Sub-11','Sub-12','Sub-13','Sub-14','Sub-15','Sub-16','Sub-17','Sub-18','Sub-19','Seniores'];
+
+function newConvObject(){
+  const now = Date.now();
+  return {id: uid(), escalao: currentUser ? currentUser.escalao : '', date:'', place:'', meet:'', time:'', captain:'', vice:'', called:{}, createdAt: now, updatedAt: now, sharedAt: 0};
+}
+function normalizeConv(c){
   if(!c.called || typeof c.called !== 'object') c.called = {};
   const ids = new Set(userData.players.map(p=>p.id));
   if(c.captain && !ids.has(c.captain)) c.captain = '';
   if(c.vice && !ids.has(c.vice)) c.vice = '';
   if(c.captain && c.captain === c.vice) c.vice = '';
   return c;
+}
+function getConv(){
+  const c = (userData.convocatorias || []).find(x=>x.id === convEditId);
+  return c ? normalizeConv(c) : null;
 }
 
 function sortedPlayers(){
@@ -1564,10 +1581,10 @@ function formatGameDate(iso){
 function formatTimePT(t){ return /^\d{2}:\d{2}$/.test(t || '') ? t.replace(':', 'h') : ''; }
 
 /* o que vai escrito no cartaz */
-function posterData(){
-  const c = getConv();
+function posterData(c){
   const byId = {}; userData.players.forEach(p=>{ byId[p.id] = p; });
   return {
+    escalao: String(c.escalao || '').trim(),
     date: formatGameDate(c.date),
     place: String(c.place || '').trim(),
     meet: formatTimePT(c.meet),
@@ -1654,6 +1671,23 @@ function drawPoster(canvas, data, crest){
   ctx.font = `bold 46px ${POSTER_FONT}`;
   ctx.fillText('UNIÃO DESPORTIVA', tx, 112);
   ctx.fillText('DE BEIRIZ', tx, 168);
+
+  /* escalão: etiqueta dourada no canto superior direito */
+  if(data.escalao){
+    const label = data.escalao.toUpperCase(), padX = 30, maxW = 300 - 2*padX;
+    fitFont(ctx, label, 'bold', maxW, 46, 24);
+    const txt = ellipsize(ctx, label, maxW);
+    const bw = ctx.measureText(txt).width + 2*padX, bh = 78, bx = W - M - bw, by = 84, r = 18;
+    ctx.fillStyle = GOLD;
+    ctx.beginPath();
+    ctx.moveTo(bx + r, by); ctx.lineTo(bx + bw - r, by); ctx.arcTo(bx + bw, by, bx + bw, by + r, r);
+    ctx.lineTo(bx + bw, by + bh - r); ctx.arcTo(bx + bw, by + bh, bx + bw - r, by + bh, r);
+    ctx.lineTo(bx + r, by + bh); ctx.arcTo(bx, by + bh, bx, by + bh - r, r);
+    ctx.lineTo(bx, by + r); ctx.arcTo(bx, by, bx + r, by, r); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#06141d'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(txt, bx + bw/2, by + bh/2 + 2);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  }
   ctx.fillStyle = GOLD; ctx.fillRect(M, 232, 96, 8);
 
   /* título */
@@ -1758,42 +1792,139 @@ async function redrawPoster(){
   if(!canvas) return;
   const crest = await loadCrest();
   if(document.getElementById('posterCanvas') !== canvas) return;
-  drawPoster(canvas, posterData(), crest);
+  const conv = getConv();
+  if(conv) drawPoster(canvas, posterData(conv), crest);
 }
 let posterTimer;
 function schedulePoster(){ clearTimeout(posterTimer); posterTimer = setTimeout(redrawPoster, 60); }
 
 /* grava sozinho, pouco depois de cada alteração */
-let convSaveTimer;
+let convSaveTimer; let convSavePending = false;
 function setConvStatus(msg, err){
   const el = document.getElementById('cvStatus');
   if(el){ el.textContent = msg; el.style.color = err ? 'var(--danger)' : 'var(--muted)'; }
 }
 function scheduleConvSave(){
+  const c = getConv(); if(c) c.updatedAt = Date.now();
+  convSavePending = true;
   setConvStatus('A guardar…');
   clearTimeout(convSaveTimer);
   convSaveTimer = setTimeout(async ()=>{
+    convSavePending = false;
     try{ await saveUserData(); setConvStatus('✓ Guardado'); }
     catch(e){ setConvStatus('Falha ao guardar — verifica a ligação', true); }
   }, 700);
 }
+async function flushConvSave(){
+  if(!convSavePending) return;
+  clearTimeout(convSaveTimer); convSavePending = false;
+  try{ await saveUserData(); }catch(e){ showToast('Falha ao guardar — verifica a ligação', true); }
+}
 
-/* ---------- ecrã ---------- */
+/* ---------- lista de convocatórias ---------- */
+function convCount(c){
+  const valid = new Set(userData.players.map(p=>p.id));
+  const ids = new Set(Object.keys(c.called || {}).filter(id=> c.called[id]));
+  if(c.captain) ids.add(c.captain);
+  if(c.vice) ids.add(c.vice);
+  return [...ids].filter(id=> valid.has(id)).length;
+}
+function convSorted(){
+  return (userData.convocatorias || []).slice().sort((a,b)=> String(b.date || '9999').localeCompare(String(a.date || '9999')) || ((b.createdAt || 0) - (a.createdAt || 0)));
+}
+
 function renderConvocados(wrap){
-  if(userData.players.length === 0){
-    wrap.innerHTML = `<div class="empty-state"><div class="big">📣</div><p>Ainda não há jogadores no plantel.<br>Adiciona primeiro os jogadores no Plantel para fazeres a convocatória.</p></div>`;
-    return;
-  }
   const c = getConv();
+  if(convEditId && !c) convEditId = null;        // foi eliminada por outro diretor
+  if(c) renderConvEditor(wrap, c); else renderConvList(wrap);
+}
+
+function renderConvList(wrap){
+  const list = convSorted();
+  const canCreate = userData.players.length > 0;
+  wrap.innerHTML = `
+    <button type="button" class="btn btn-primary" id="cvNew" ${canCreate ? '' : 'disabled'}>+ Nova convocatória</button>
+    ${canCreate ? '' : '<div class="bday-note" style="margin-top:12px;">Adiciona primeiro os jogadores no Plantel para fazeres a convocatória.</div>'}
+    ${list.length === 0
+      ? `<div class="empty-state"><div class="big">📣</div><p>Ainda não há convocatórias guardadas.${canCreate ? '<br>Toca em "Nova convocatória" para criares a primeira.' : ''}</p></div>`
+      : `<div class="list" style="margin-top:14px;">${list.map(c=>`
+        <div class="card">
+          <div class="card-row">
+            <div class="card-body">
+              <div class="card-title">${c.escalao ? escapeHtml(c.escalao) : 'Sem escalão'} · ${c.date ? formatDatePT(c.date) : 'Sem data'}</div>
+              <div class="card-sub">${c.place ? escapeHtml(c.place) : 'Local por definir'}</div>
+              <div class="card-meta">
+                <span class="tag count-tag">${convCount(c)} convocados</span>
+                ${c.sharedAt ? '<span class="tag paid">Partilhada</span>' : '<span class="tag unpaid">Por partilhar</span>'}
+              </div>
+            </div>
+            <button type="button" class="icon-btn del" data-del="${c.id}" aria-label="Eliminar convocatória">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+          </div>
+          <div class="card-actions">
+            <button type="button" class="pill-btn pill-open" data-open="${c.id}">Abrir</button>
+            <button type="button" class="pill-btn pill-send" data-dup="${c.id}">Duplicar</button>
+          </div>
+        </div>`).join('')}</div>`}
+  `;
+  document.getElementById('cvNew').onclick = ()=> createConv(null);
+  wrap.querySelectorAll('[data-open]').forEach(el=>{ el.onclick = ()=>{ convEditId = el.dataset.open; render(); }; });
+  wrap.querySelectorAll('[data-dup]').forEach(el=>{
+    el.onclick = ()=> createConv(userData.convocatorias.find(x=>x.id === el.dataset.dup));
+  });
+  wrap.querySelectorAll('[data-del]').forEach(el=>{ el.onclick = ()=> confirmDeleteConv(el.dataset.del); });
+}
+
+/* nova convocatória (em branco) ou duplicada (mesmos convocados e cargos, sem dia nem horas) */
+async function createConv(base){
+  if(!Array.isArray(userData.convocatorias)) userData.convocatorias = [];
+  const c = newConvObject();
+  if(base){ c.escalao = base.escalao; c.place = base.place; c.captain = base.captain; c.vice = base.vice; c.called = Object.assign({}, base.called); }
+  userData.convocatorias.push(c);
+  convEditId = c.id;
+  render();
+  try{ await saveUserData(); }catch(e){ showToast('Falha ao guardar — verifica a ligação', true); }
+}
+
+function confirmDeleteConv(id){
+  const c = userData.convocatorias.find(x=>x.id === id);
+  if(!c) return;
+  openSheetRaw(`
+    <h2>Eliminar convocatória?</h2>
+    <p style="color:var(--muted);font-size:14px;line-height:1.55;margin-top:-6px;"><b>${c.escalao ? escapeHtml(c.escalao) : 'Sem escalão'} · ${c.date ? formatDatePT(c.date) : 'Sem data'}</b>. Esta ação não pode ser desfeita.</p>
+    <div class="sheet-actions">
+      <button class="btn-cancel" id="dcNo">Cancelar</button>
+      <button class="btn-save" id="dcYes" style="background:var(--danger);color:#2b0409;">Eliminar</button>
+    </div>`);
+  document.getElementById('dcNo').onclick = closeSheet;
+  document.getElementById('dcYes').onclick = async ()=>{
+    userData.convocatorias = userData.convocatorias.filter(x=>x.id !== id);
+    closeSheet(); render();
+    try{ await saveUserData(); showToast('Convocatória eliminada'); }catch(e){ showToast('Falha ao guardar — verifica a ligação', true); }
+  };
+}
+
+/* ---------- editor da convocatória ---------- */
+function renderConvEditor(wrap, c){
   const players = sortedPlayers();
   const label = p => `${p.number!=null && String(p.number).trim()!=='' ? p.number + ' · ' : ''}${p.name}`;
   const opts = (exclude, selected) => `<option value="">— escolher —</option>` + players.filter(p=>p.id !== exclude)
     .map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${escapeHtml(label(p))}</option>`).join('');
   const calledCount = () => players.filter(p=> c.called[p.id] || p.id === c.captain || p.id === c.vice).length;
+  const escalaoOpts = (currentUser && currentUser.escalao && !ESCALOES.includes(currentUser.escalao) ? [currentUser.escalao] : []).concat(ESCALOES);
 
   wrap.innerHTML = `
+    <div class="conv-top">
+      <button type="button" class="ghost-btn" id="cvBack">← Convocatórias</button>
+      ${c.sharedAt ? '<span class="tag paid">Partilhada</span>' : '<span class="tag unpaid">Por partilhar</span>'}
+    </div>
+
     <div class="card conv-block" style="margin-top:0;">
       <div class="card-title">Dados do jogo</div>
+      <div class="field-label">Escalão</div>
+      <input type="text" id="cvEscalao" list="cvEscalaoList" value="${escapeHtml(c.escalao)}" placeholder="Ex: Sub-12">
+      <datalist id="cvEscalaoList">${escalaoOpts.map(e=>`<option value="${escapeHtml(e)}">`).join('')}</datalist>
       <div class="field-label">Dia do jogo</div>
       <input type="date" id="cvDate" value="${escapeHtml(c.date)}">
       <div class="field-label">Local do jogo</div>
@@ -1847,13 +1978,15 @@ function renderConvocados(wrap){
   const upd = ()=>{ document.getElementById('cvCount').textContent = `${calledCount()}/${players.length} convocados`; };
   upd();
 
+  document.getElementById('cvBack').onclick = async ()=>{ await flushConvSave(); convEditId = null; render(); };
+
   const bind = (id, key)=>{
     const el = document.getElementById(id);
     const handler = ()=>{ c[key] = el.value; schedulePoster(); scheduleConvSave(); };
     el.addEventListener('input', handler);
     el.addEventListener('change', handler);
   };
-  bind('cvDate', 'date'); bind('cvPlace', 'place'); bind('cvMeet', 'meet'); bind('cvTime', 'time');
+  bind('cvEscalao', 'escalao'); bind('cvDate', 'date'); bind('cvPlace', 'place'); bind('cvMeet', 'meet'); bind('cvTime', 'time');
 
   document.getElementById('cvCaptain').onchange = function(){
     c.captain = this.value;
@@ -1904,14 +2037,16 @@ function canvasToPngBlob(canvas){
   for(let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
   return new Blob([arr], {type:'image/png'});
 }
-function convFileBase(){
-  const c = getConv();
-  return 'Convocados_' + (c.date ? formatSheetName(c.date) : 'UDB');
+function fileSafe(s){
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9-]+/g, '_').replace(/^_+|_+$/g, '');
 }
-function convEmailText(){
-  const d = posterData();
+function convFileBase(c){
+  return ['Convocados', fileSafe(c.escalao), c.date ? formatSheetName(c.date) : ''].filter(Boolean).join('_');
+}
+function convEmailText(c){
+  const d = posterData(c);
   const lines = [
-    `Convocados — ${currentUser.escalao}`, '',
+    `Convocados — ${d.escalao || '—'}`, '',
     `Dia do jogo: ${d.date || '—'}`,
     `Local do jogo: ${d.place || '—'}`,
     `Hora da concentração: ${d.meet || '—'}`,
@@ -1923,17 +2058,23 @@ function convEmailText(){
   lines.push('', 'Força UDB!');
   return lines.join('\n');
 }
+/* devolve true se a partilha foi feita (ou o ficheiro descarregado) e false se a pessoa cancelou */
 function shareImageFile(blob, fileName){
   const file = (typeof File !== 'undefined') ? new File([blob], fileName, {type:'image/png'}) : null;
   if(file && navigator.canShare && navigator.canShare({files:[file]})){
-    navigator.share({files:[file], title:fileName}).catch((e)=>{ if(e && e.name === 'AbortError') return; fallbackDownloadBlob(blob, fileName); });
-  }else{
-    fallbackDownloadBlob(blob, fileName);
+    return navigator.share({files:[file], title:fileName}).then(()=>true).catch((e)=>{
+      if(e && e.name === 'AbortError') return false;
+      fallbackDownloadBlob(blob, fileName); return true;
+    });
   }
+  fallbackDownloadBlob(blob, fileName);
+  return Promise.resolve(true);
 }
+
 function openShareConvSheet(){
   const canvas = document.getElementById('posterCanvas');
-  if(!canvas) return;
+  const c = getConv();
+  if(!canvas || !c) return;
   openSheetRaw(`
     <h2>Partilhar cartaz</h2>
     <div class="stack" style="margin-top:4px;">
@@ -1943,31 +2084,52 @@ function openShareConvSheet(){
       <button class="btn btn-ghost" id="cvClose">Fechar</button>
     </div>
   `);
+  const base = convFileBase(c);
   document.getElementById('cvClose').onclick = closeSheet;
-  document.getElementById('cvWhats').onclick = ()=>{
+  document.getElementById('cvWhats').onclick = async ()=>{
     const blob = canvasToPngBlob(canvas);
     closeSheet();
-    shareImageFile(blob, convFileBase() + '.png');
+    if(await shareImageFile(blob, base + '.png')) afterConvShared(c);
   };
   document.getElementById('cvDownload').onclick = ()=>{
     const blob = canvasToPngBlob(canvas);
     closeSheet();
-    fallbackDownloadBlob(blob, convFileBase() + '.png');
+    fallbackDownloadBlob(blob, base + '.png');
+    afterConvShared(c);
   };
   document.getElementById('cvMail').onclick = async ()=>{
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({unit:'mm', format:'a4'});
     const w = 190, hgt = w * POSTER_H / POSTER_W;
     doc.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 10, 15, w, hgt);
-    const fileName = convFileBase() + '.pdf';
     closeSheet();
     showToast('A gerar PDF e a enviar...');
-    await shareOrEmailPDF(doc, fileName, {
+    const ok = await shareOrEmailPDF(doc, base + '.pdf', {
       toEmail: currentUser.email,
-      emailSubject: `${currentUser.escalao} — Convocados${getConv().date ? ' ' + formatDatePT(getConv().date) : ''}`,
-      emailBody: convEmailText()
+      emailSubject: `${c.escalao || currentUser.escalao} — Convocados${c.date ? ' ' + formatDatePT(c.date) : ''}`,
+      emailBody: convEmailText(c)
     });
+    if(ok) afterConvShared(c);
   };
+}
+
+/* depois de partilhar: a convocatória fica guardada na lista e oferece-se criar outra */
+async function afterConvShared(c){
+  c.sharedAt = Date.now(); c.updatedAt = c.sharedAt;
+  clearTimeout(convSaveTimer); convSavePending = false;
+  try{ await saveUserData(); }catch(e){ showToast('Falha ao guardar — verifica a ligação', true); }
+  openSheetRaw(`
+    <h2>Convocatória guardada ✓</h2>
+    <p style="color:var(--muted);font-size:14px;line-height:1.55;margin-top:-6px;"><b>${c.escalao ? escapeHtml(c.escalao) : 'Sem escalão'} · ${c.date ? formatDatePT(c.date) : 'Sem data'}</b> ficou guardada na lista de convocatórias. Queres criar outra?</p>
+    <div class="stack" style="margin-top:6px;">
+      <button class="btn btn-primary" id="cvAfterNew">+ Nova convocatória</button>
+      <button class="btn btn-secondary" id="cvAfterDup">Duplicar esta (mesmos convocados)</button>
+      <button class="btn btn-ghost" id="cvAfterList">Ver as convocatórias</button>
+    </div>
+  `);
+  document.getElementById('cvAfterNew').onclick = ()=>{ closeSheet(); createConv(null); };
+  document.getElementById('cvAfterDup').onclick = ()=>{ closeSheet(); createConv(c); };
+  document.getElementById('cvAfterList').onclick = ()=>{ closeSheet(); convEditId = null; render(); };
 }
 
 /* ===================================================================
