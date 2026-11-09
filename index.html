@@ -1553,7 +1553,7 @@ const ESCALOES = ['Sub-6','Sub-7','Sub-8','Sub-9','Sub-10','Sub-11','Sub-12','Su
 
 function newConvObject(){
   const now = Date.now();
-  return {id: uid(), escalao: currentUser ? currentUser.escalao : '', date:'', place:'', meet:'', time:'', captain:'', vice:'', called:{}, createdAt: now, updatedAt: now, sharedAt: 0};
+  return {id: uid(), escalao: currentUser ? currentUser.escalao : '', opponent:'', date:'', place:'', meet:'', time:'', captain:'', vice:'', called:{}, createdAt: now, updatedAt: now, sharedAt: 0};
 }
 function normalizeConv(c){
   if(!c.called || typeof c.called !== 'object') c.called = {};
@@ -1586,6 +1586,7 @@ function posterData(c){
   return {
     escalao: String(c.escalao || '').trim(),
     date: formatGameDate(c.date),
+    opponent: String(c.opponent || '').trim(),
     place: String(c.place || '').trim(),
     meet: formatTimePT(c.meet),
     time: formatTimePT(c.time),
@@ -1663,21 +1664,21 @@ function drawPoster(canvas, data, crest){
   /* cabeçalho: brasão + nome do clube */
   let tx = M;
   if(crest && crest.width){
-    const ch = 132, cw = ch * crest.width / crest.height;
-    ctx.drawImage(crest, M, 56, cw, ch);
-    tx = M + cw + 30;
+    const ch = 124, cw = ch * crest.width / crest.height;
+    ctx.drawImage(crest, M, 46, cw, ch);
+    tx = M + cw + 28;
   }
   ctx.fillStyle = WHITE;
-  ctx.font = `bold 46px ${POSTER_FONT}`;
-  ctx.fillText('UNIÃO DESPORTIVA', tx, 112);
-  ctx.fillText('DE BEIRIZ', tx, 168);
+  ctx.font = `bold 44px ${POSTER_FONT}`;
+  ctx.fillText('UNIÃO DESPORTIVA', tx, 100);
+  ctx.fillText('DE BEIRIZ', tx, 150);
 
   /* escalão: etiqueta dourada no canto superior direito */
   if(data.escalao){
     const label = data.escalao.toUpperCase(), padX = 30, maxW = 300 - 2*padX;
     fitFont(ctx, label, 'bold', maxW, 46, 24);
     const txt = ellipsize(ctx, label, maxW);
-    const bw = ctx.measureText(txt).width + 2*padX, bh = 78, bx = W - M - bw, by = 84, r = 18;
+    const bw = ctx.measureText(txt).width + 2*padX, bh = 78, bx = W - M - bw, by = 70, r = 18;
     ctx.fillStyle = GOLD;
     ctx.beginPath();
     ctx.moveTo(bx + r, by); ctx.lineTo(bx + bw - r, by); ctx.arcTo(bx + bw, by, bx + bw, by + r, r);
@@ -1688,44 +1689,48 @@ function drawPoster(canvas, data, crest){
     ctx.fillText(txt, bx + bw/2, by + bh/2 + 2);
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   }
-  ctx.fillStyle = GOLD; ctx.fillRect(M, 232, 96, 8);
+  ctx.fillStyle = GOLD; ctx.fillRect(M, 204, 96, 8);
 
   /* título */
   ctx.fillStyle = GOLD;
-  fitFont(ctx, 'CONVOCADOS', 'italic bold', W - 2*M, 120, 70);
-  ctx.fillText('CONVOCADOS', M, 360);
+  fitFont(ctx, 'CONVOCADOS', 'italic bold', W - 2*M, 108, 70);
+  ctx.fillText('CONVOCADOS', M, 316);
 
-  /* dados do jogo (2 x 2) */
-  const colW = (W - 2*M - 40) / 2;
-  const cellDefs = [
-    {label:'DIA DO JOGO', value:data.date, x:M, y:432, maxLines:2},
-    {label:'LOCAL DO JOGO', value:data.place, x:M + colW + 40, y:432, maxLines:3},
-    {label:'HORA DA CONCENTRAÇÃO', value:data.meet, x:M, y:560, maxLines:1},
-    {label:'HORA DO JOGO', value:data.time, x:M + colW + 40, y:560, maxLines:1}
+  /* dados do jogo: cada linha ocupa o espaço de que precisa */
+  const colW = (W - 2*M - 40) / 2, fullW = W - 2*M, xR = M + colW + 40;
+  const gridRows = [
+    [{label:'DIA DO JOGO', value:data.date, x:M, w:colW, maxLines:2},
+     {label:'LOCAL DO JOGO', value:data.place, x:xR, w:colW, maxLines:3}],
+    [{label:'HORA DA CONCENTRAÇÃO', value:data.meet, x:M, w:colW, maxLines:1},
+     {label:'HORA DO JOGO', value:data.time, x:xR, w:colW, maxLines:1}],
+    [{label:'EQUIPA ADVERSÁRIA', value:data.opponent, x:M, w:fullW, maxLines:2}]
   ];
-  /* o local pode precisar de 3 linhas: nesse caso o resto do cartaz desce um pouco */
-  const layouts = cellDefs.map(c=> c.value ? valueLayout(ctx, c.value, colW, c.maxLines) : null);
-  const row1Lines = Math.max(layouts[0] ? layouts[0].lines.length : 0, layouts[1] ? layouts[1].lines.length : 0);
-  const extra = Math.max(0, row1Lines - 2) * 36;
-  cellDefs.forEach((c, idx)=>{
-    const y = c.y + (idx >= 2 ? extra : 0);
-    ctx.fillStyle = GOLD; ctx.font = `bold 23px ${POSTER_FONT}`;
-    ctx.fillText(c.label, c.x, y);
-    const L = layouts[idx];
-    if(L){
-      ctx.fillStyle = WHITE; ctx.font = `bold ${L.size}px ${POSTER_FONT}`;
-      const first = (L.lines.length === 1 && L.size > 30) ? 54 : 48;
-      L.lines.forEach((ln, i)=> ctx.fillText(ln, c.x, y + first + i * 36));
-    }else{
-      ctx.fillStyle = MUTED; ctx.font = `bold 42px ${POSTER_FONT}`;
-      ctx.fillText('—', c.x, y + 54);
-    }
+  let y = 372;
+  gridRows.forEach(row=>{
+    const lays = row.map(c=> c.value ? valueLayout(ctx, c.value, c.w, c.maxLines) : null);
+    const lines = Math.max(1, ...lays.map(L=> L ? L.lines.length : 1));
+    row.forEach((c, i)=>{
+      ctx.fillStyle = GOLD; ctx.font = `bold 22px ${POSTER_FONT}`;
+      ctx.fillText(c.label, c.x, y);
+      const L = lays[i];
+      if(L){
+        ctx.fillStyle = WHITE; ctx.font = `bold ${L.size}px ${POSTER_FONT}`;
+        const first = (L.lines.length === 1 && L.size > 30) ? 48 : 44;
+        L.lines.forEach((ln, k)=> ctx.fillText(ln, c.x, y + first + k * 36));
+      }else{
+        ctx.fillStyle = MUTED; ctx.font = `bold 40px ${POSTER_FONT}`;
+        ctx.fillText('—', c.x, y + 48);
+      }
+    });
+    y += 44 + (lines - 1) * 36 + 58;
   });
 
-  ctx.fillStyle = 'rgba(255,212,0,0.55)'; ctx.fillRect(M, 664 + extra, W - 2*M, 3);
+  const divY = y - 8;
+  ctx.fillStyle = 'rgba(255,212,0,0.55)'; ctx.fillRect(M, divY, W - 2*M, 3);
 
   /* capitão e sub-capitão */
-  [['Capitão:', data.captain, 742 + extra], ['Sub-capitão:', data.vice, 818 + extra]].forEach(r=>{
+  const capY = divY + 68, viceY = capY + 66;
+  [['Capitão:', data.captain, capY], ['Sub-capitão:', data.vice, viceY]].forEach(r=>{
     ctx.fillStyle = GOLD; ctx.font = `bold 38px ${POSTER_FONT}`;
     ctx.fillText(r[0], M, r[2]);
     const lx = M + ctx.measureText(r[0]).width + 24;
@@ -1739,10 +1744,11 @@ function drawPoster(canvas, data, crest){
     }
     ctx.fillStyle = 'rgba(244,251,255,0.14)'; ctx.fillRect(M, r[2] + 16, W - 2*M, 2);
   });
+  const listTop = viceY + 58;
 
   /* restantes convocados */
   const others = data.others;
-  const top = 886 + extra, bottom = 1220;
+  const top = listTop, bottom = 1232;
   if(others.length){
     const cols = others.length > 6 ? 2 : 1;
     const rows = Math.ceil(others.length / cols);
@@ -1767,8 +1773,8 @@ function drawPoster(canvas, data, crest){
 
   /* rodapé */
   ctx.fillStyle = GOLD; ctx.textAlign = 'center';
-  ctx.font = `italic bold 66px ${POSTER_FONT}`;
-  ctx.fillText('Força UDB!', W/2, 1300);
+  ctx.font = `italic bold 62px ${POSTER_FONT}`;
+  ctx.fillText('Força UDB!', W/2, 1306);
   ctx.textAlign = 'left';
 }
 
@@ -1852,7 +1858,7 @@ function renderConvList(wrap){
           <div class="card-row">
             <div class="card-body">
               <div class="card-title">${c.escalao ? escapeHtml(c.escalao) : 'Sem escalão'} · ${c.date ? formatDatePT(c.date) : 'Sem data'}</div>
-              <div class="card-sub">${c.place ? escapeHtml(c.place) : 'Local por definir'}</div>
+              <div class="card-sub">${escapeHtml([c.opponent ? 'vs ' + c.opponent : '', c.place || ''].filter(Boolean).join(' · ') || 'Por preencher')}</div>
               <div class="card-meta">
                 <span class="tag count-tag">${convCount(c)} convocados</span>
                 ${c.sharedAt ? '<span class="tag paid">Partilhada</span>' : '<span class="tag unpaid">Por partilhar</span>'}
@@ -1925,6 +1931,8 @@ function renderConvEditor(wrap, c){
       <div class="field-label">Escalão</div>
       <input type="text" id="cvEscalao" list="cvEscalaoList" value="${escapeHtml(c.escalao)}" placeholder="Ex: Sub-12">
       <datalist id="cvEscalaoList">${escalaoOpts.map(e=>`<option value="${escapeHtml(e)}">`).join('')}</datalist>
+      <div class="field-label">Equipa adversária</div>
+      <input type="text" id="cvOpponent" value="${escapeHtml(c.opponent || '')}" placeholder="Ex: Rio Tinto">
       <div class="field-label">Dia do jogo</div>
       <input type="date" id="cvDate" value="${escapeHtml(c.date)}">
       <div class="field-label">Local do jogo</div>
@@ -1986,7 +1994,7 @@ function renderConvEditor(wrap, c){
     el.addEventListener('input', handler);
     el.addEventListener('change', handler);
   };
-  bind('cvEscalao', 'escalao'); bind('cvDate', 'date'); bind('cvPlace', 'place'); bind('cvMeet', 'meet'); bind('cvTime', 'time');
+  bind('cvEscalao', 'escalao'); bind('cvOpponent', 'opponent'); bind('cvDate', 'date'); bind('cvPlace', 'place'); bind('cvMeet', 'meet'); bind('cvTime', 'time');
 
   document.getElementById('cvCaptain').onchange = function(){
     c.captain = this.value;
@@ -2041,7 +2049,7 @@ function fileSafe(s){
   return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9-]+/g, '_').replace(/^_+|_+$/g, '');
 }
 function convFileBase(c){
-  return ['Convocados', fileSafe(c.escalao), c.date ? formatSheetName(c.date) : ''].filter(Boolean).join('_');
+  return ['Convocados', fileSafe(c.escalao), c.date ? formatSheetName(c.date) : '', fileSafe(c.opponent)].filter(Boolean).join('_');
 }
 function convEmailText(c){
   const d = posterData(c);
@@ -2050,7 +2058,8 @@ function convEmailText(c){
     `Dia do jogo: ${d.date || '—'}`,
     `Local do jogo: ${d.place || '—'}`,
     `Hora da concentração: ${d.meet || '—'}`,
-    `Hora do jogo: ${d.time || '—'}`, '',
+    `Hora do jogo: ${d.time || '—'}`,
+    `Equipa adversária: ${d.opponent || '—'}`, '',
     `Capitão: ${d.captain || '—'}`,
     `Sub-capitão: ${d.vice || '—'}`, ''
   ];
@@ -2106,7 +2115,7 @@ function openShareConvSheet(){
     showToast('A gerar PDF e a enviar...');
     const ok = await shareOrEmailPDF(doc, base + '.pdf', {
       toEmail: currentUser.email,
-      emailSubject: `${c.escalao || currentUser.escalao} — Convocados${c.date ? ' ' + formatDatePT(c.date) : ''}`,
+      emailSubject: `${c.escalao || currentUser.escalao} — Convocados${c.date ? ' ' + formatDatePT(c.date) : ''}${String(c.opponent || '').trim() ? ' vs ' + String(c.opponent).trim() : ''}`,
       emailBody: convEmailText(c)
     });
     if(ok) afterConvShared(c);
