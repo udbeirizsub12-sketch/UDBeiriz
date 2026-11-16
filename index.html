@@ -239,6 +239,19 @@ input[type=time]:focus{outline:none;border-color:var(--gold);}
 
 .conv-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;}
 .conv-top .ghost-btn{font-family:inherit;}
+
+/* ---- resumo semanal de presenças ---- */
+.week-card{margin-bottom:12px;}
+.week-card.friday{border-color:rgba(255,212,0,0.55);box-shadow:0 0 0 1px rgba(255,212,0,0.25), 0 16px 34px -18px rgba(255,212,0,0.35);}
+.week-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.week-nav span{font-size:14.5px;font-weight:700;}
+.week-nav .icon-btn{width:38px;height:38px;font-size:24px;line-height:1;color:var(--blue);background:var(--bg-2);}
+.wk-table{width:100%;border-collapse:collapse;font-size:13px;}
+.wk-table th{color:var(--muted);font-weight:700;font-size:11px;text-transform:uppercase;padding:6px 4px;text-align:center;line-height:1.3;}
+.wk-table th:first-child, .wk-table td:first-child{text-align:left;}
+.wk-table td{padding:7px 4px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;}
+.wk-table tr.wk-all td{background:rgba(255,212,0,0.09);}
+.wk-p{color:var(--ok);font-weight:800;} .wk-f{color:var(--danger);font-weight:800;} .wk-n{color:var(--muted);}
 </style>
 </head>
 <body>
@@ -504,7 +517,7 @@ function snapshotIds(){
   baseIds = {};
   ['players','trainings','games','mensalidades','convocatorias'].forEach(k=>{ baseIds[k] = userData[k].map(x=>x.id); });
 }
-function resetData(){ userData = emptyData(); dataRev = 0; baseIds = {}; convEditId = null; }
+function resetData(){ userData = emptyData(); dataRev = 0; baseIds = {}; convEditId = null; weekAnchor = null; }
 
 async function loadUserData(username){
   const r = await api('loadData', Object.assign(auth(), {target: username}));
@@ -679,6 +692,7 @@ function enterApp(){
   showScreen('screenApp');
   render();
   checkBirthdaysOnOpen();
+  checkFridaySummaryOnOpen();
 }
 
 document.getElementById('btnLogout').onclick = ()=>{
@@ -1015,7 +1029,7 @@ function renderPresencas(subhead, wrap, fab){
   if(trainings.length===0){
     wrap.innerHTML = `<div class="empty-state"><div class="big">📋</div><p>Ainda não há sessões de treino registadas.<br>Toca no botão dourado para criar a primeira.${userData.players.length===0 ? '<br><br>Adiciona primeiro jogadores no Plantel.' : ''}</p></div>`;
   }else{
-    wrap.innerHTML = `<div class="list">${trainings.map(t=>{
+    wrap.innerHTML = weekCardHtml() + `<div class="list">${trainings.map(t=>{
       const presentCount = Object.values(t.attendance||{}).filter(Boolean).length;
       return `
       <div class="card">
@@ -1056,9 +1070,204 @@ function renderPresencas(subhead, wrap, fab){
     wrap.querySelectorAll('[data-action="send"]').forEach(el=>{
       el.onclick = ()=> openSendTrainingSheet(el.dataset.id, false);
     });
+    wireWeekCard(wrap);
   }
 
   fab.onclick = openNewTrainingSheet;
+}
+
+/* ===================================================================
+   RESUMO SEMANAL DE PRESENÇAS (um só ficheiro com quem participou nos treinos da semana)
+   =================================================================== */
+let weekAnchor = null;   // um dia da semana mostrada (null = esta semana)
+
+function parseISO(iso){ const [y,m,d] = iso.split('-').map(Number); return new Date(y, m-1, d); }
+function toISO(d){ const p = n => String(n).padStart(2,'0'); return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()); }
+function shortDM(iso){ const [, m, d] = iso.split('-'); return `${d}/${m}`; }
+/* semana de segunda a domingo */
+function weekRange(iso){
+  const d = parseISO(iso);
+  const start = new Date(d); start.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  const end = new Date(start); end.setDate(start.getDate() + 6);
+  return {start: toISO(start), end: toISO(end)};
+}
+function weekdayShort(iso){
+  return ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][parseISO(iso).getDay()];   // iguais em todos os aparelhos
+}
+function sessionLabel(t){ return `${weekdayShort(t.date)} ${shortDM(t.date)}`; }
+
+function weeklySummary(anyDateISO){
+  const {start, end} = weekRange(anyDateISO);
+  const sessions = userData.trainings.filter(t=> t.date >= start && t.date <= end).sort((a,b)=> a.date.localeCompare(b.date));
+  const rows = sortedPlayers().map(p=>{
+    const marks = sessions.map(t=> (t.attendance && p.id in t.attendance) ? (t.attendance[p.id] ? 'P' : 'F') : '-');
+    const present = marks.filter(m=> m === 'P').length;
+    return {player:p, marks, present, all: sessions.length > 0 && present === sessions.length};
+  });
+  return {start, end, sessions, rows, all: rows.filter(r=> r.all)};
+}
+function weekTitleAll(n){ return n === 1 ? 'Participaram no treino' : `Participaram nos ${n} treinos`; }
+
+function weekCardHtml(){
+  if(!userData.trainings.length) return '';
+  const sum = weeklySummary(weekAnchor || todayISO());
+  const thisWeek = weekRange(todayISO()).start === sum.start;
+  const friday = thisWeek && new Date().getDay() === 5;
+  const N = sum.sessions.length, k = sum.all.length;
+  const sub = N === 0 ? 'Ainda não há treinos registados nesta semana.'
+    : `${N} treino${N>1?'s':''} registado${N>1?'s':''} · ${k} jogador${k===1?'':'es'} em ${N===1?'todos':'todos os treinos'}`;
+  return `
+    <div class="card week-card ${friday ? 'friday' : ''}" id="weekCard">
+      ${friday ? '<span class="tag count-tag" style="align-self:flex-start;">Sexta-feira · resumo pronto</span>' : ''}
+      <div class="card-title">📅 Resumo da semana</div>
+      <div class="week-nav">
+        <button type="button" class="icon-btn" id="wkPrev" aria-label="Semana anterior">‹</button>
+        <span id="wkLabel">${shortDM(sum.start)} – ${formatDatePT(sum.end)}</span>
+        <button type="button" class="icon-btn" id="wkNext" aria-label="Semana seguinte">›</button>
+      </div>
+      <div class="card-sub">${sub}</div>
+      <button type="button" class="btn btn-primary" id="wkOpen" ${N ? '' : 'disabled'}>Ver / partilhar resumo (PDF)</button>
+    </div>`;
+}
+function wireWeekCard(wrap){
+  const shift = delta => { const d = parseISO(weekAnchor || todayISO()); d.setDate(d.getDate() + 7 * delta); weekAnchor = toISO(d); render(); };
+  const prev = document.getElementById('wkPrev'), next = document.getElementById('wkNext'), open = document.getElementById('wkOpen');
+  if(prev) prev.onclick = ()=> shift(-1);
+  if(next) next.onclick = ()=> shift(1);
+  if(open) open.onclick = ()=> openWeeklySheet(weekAnchor || todayISO());
+}
+
+function weeklyFileBase(sum){
+  const [y] = sum.end.split('-');
+  return `${fileSafe(currentUser.escalao) || 'Equipa'}_Presencas_Semana_${shortDM(sum.start).replace('/', '-')}_a_${shortDM(sum.end).replace('/', '-')}-${y}`;
+}
+
+function buildWeeklyPDF(sum){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const N = sum.sessions.length;
+  pdfHeader(doc, `${currentUser.escalao} — Presenças da semana de ${formatDatePT(sum.start)} a ${formatDatePT(sum.end)}`);
+  let y = 38;
+  const newPage = ()=>{ doc.addPage(); y = 20; };
+
+  doc.setFont(undefined, 'normal'); doc.setFontSize(10);
+  doc.text(N ? `Treinos registados: ${N} (${sum.sessions.map(sessionLabel).join(', ')})` : 'Sem treinos registados nesta semana.', 14, y);
+  y += 11;
+
+  /* 1) quem participou em todos os treinos */
+  doc.setFont(undefined, 'bold'); doc.setFontSize(12);
+  doc.text(`${weekTitleAll(N)} (${sum.all.length})`, 14, y); y += 8;
+  doc.setFont(undefined, 'normal'); doc.setFontSize(10);
+  if(!N){ doc.text('—', 18, y); y += 6; }
+  else if(!sum.all.length){ doc.text('Nenhum jogador participou em todos os treinos.', 18, y); y += 6; }
+  else sum.all.forEach(r=>{
+    if(y > 280) newPage();
+    const num = (r.player.number != null && String(r.player.number).trim() !== '') ? String(r.player.number).trim() : '-';
+    doc.text(num, 18, y); doc.text(r.player.name, 30, y); y += 6;
+  });
+
+  /* 2) quadro de presenças de todos os jogadores */
+  if(N){
+    y += 8;
+    if(y > 250) newPage();
+    doc.setFont(undefined, 'bold'); doc.setFontSize(12);
+    doc.text('Quadro de presenças', 14, y); y += 6;
+    doc.setFont(undefined, 'normal'); doc.setFontSize(8);
+    doc.text('P = presente   F = falta   - = sem registo', 14, y); y += 7;
+
+    const colW = Math.min(18, 84 / N), x0 = 102;
+    const header = ()=>{
+      doc.setFont(undefined, 'bold'); doc.setFontSize(9);
+      doc.text('Jogador', 14, y);
+      sum.sessions.forEach((t, i)=> doc.text(sessionLabel(t), x0 + i * colW, y));
+      doc.text('Total', x0 + N * colW + 2, y);
+      doc.setDrawColor(150); doc.line(14, y + 2, 196, y + 2);
+      y += 8; doc.setFont(undefined, 'normal'); doc.setFontSize(10);
+    };
+    header();
+    sum.rows.forEach(r=>{
+      if(y > 280){ newPage(); header(); }
+      if(r.all){ doc.setFillColor(255, 244, 190); doc.rect(12, y - 4.6, 186, 6.8, 'F'); }
+      const num = (r.player.number != null && String(r.player.number).trim() !== '') ? String(r.player.number).trim() + '  ' : '';
+      doc.text(num + r.player.name, 14, y);
+      r.marks.forEach((m, i)=> doc.text(m, x0 + i * colW + 3, y));
+      doc.text(`${r.present}/${N}`, x0 + N * colW + 2, y);
+      y += 7;
+    });
+  }
+  return doc;
+}
+
+function weeklyEmailText(sum){
+  const N = sum.sessions.length;
+  const lines = [`Presenças da semana de ${formatDatePT(sum.start)} a ${formatDatePT(sum.end)} — ${currentUser.escalao}`, ''];
+  lines.push(N ? `Treinos registados: ${N} (${sum.sessions.map(sessionLabel).join(', ')})` : 'Sem treinos registados nesta semana.', '');
+  lines.push(`${weekTitleAll(N)} (${sum.all.length}):`);
+  if(sum.all.length) sum.all.forEach(r=> lines.push('- ' + r.player.name)); else lines.push('Nenhum jogador participou em todos os treinos.');
+  lines.push('', 'O quadro completo segue em anexo (PDF).');
+  return lines.join('\n');
+}
+
+function openWeeklySheet(anchorISO){
+  const sum = weeklySummary(anchorISO);
+  const N = sum.sessions.length;
+  const cell = m => m === 'P' ? '<span class="wk-p">✓</span>' : m === 'F' ? '<span class="wk-f">✗</span>' : '<span class="wk-n">–</span>';
+  openSheetRaw(`
+    <h2>Resumo da semana</h2>
+    <p style="color:var(--muted);font-size:13.5px;line-height:1.55;margin-top:-8px;">${formatDatePT(sum.start)} a ${formatDatePT(sum.end)}<br>${N} treino${N===1?'':'s'}: ${sum.sessions.map(sessionLabel).join(' · ') || '—'}</p>
+    <div class="field-label">${weekTitleAll(N)} (${sum.all.length})</div>
+    ${sum.all.length ? sum.all.map(r=>`<div class="bday-item"><b>${escapeHtml(r.player.name)}</b>${r.player.number ? ` <span>· camisola ${escapeHtml(r.player.number)}</span>` : ''}</div>`).join('')
+      : '<div class="bday-line">Nenhum jogador participou em todos os treinos.</div>'}
+    <div class="field-label" style="margin-top:16px;">Quadro de presenças</div>
+    <div style="overflow-x:auto;">
+      <table class="wk-table">
+        <tr><th>Jogador</th>${sum.sessions.map(t=>`<th>${weekdayShort(t.date)}<br>${shortDM(t.date)}</th>`).join('')}<th>Total</th></tr>
+        ${sum.rows.map(r=>`<tr class="${r.all ? 'wk-all' : ''}"><td>${escapeHtml(r.player.name)}</td>${r.marks.map(m=>`<td>${cell(m)}</td>`).join('')}<td><b>${r.present}/${N}</b></td></tr>`).join('')}
+      </table>
+    </div>
+    <div class="stack" style="margin-top:16px;">
+      <button class="btn btn-primary" id="wkMail">Email (PDF)<br><span style="font-size:11.5px;font-weight:600;opacity:.8;">${escapeHtml(currentUser.email)}</span></button>
+      <button class="btn btn-secondary" id="wkWhats">WhatsApp / outra app (PDF)</button>
+      <button class="btn btn-secondary" id="wkDownload">Descarregar PDF</button>
+      <button class="btn btn-ghost" id="wkClose">Fechar</button>
+    </div>
+  `);
+  const fileName = weeklyFileBase(sum) + '.pdf';
+  document.getElementById('wkClose').onclick = closeSheet;
+  document.getElementById('wkWhats').onclick = ()=>{ const doc = buildWeeklyPDF(sum); closeSheet(); shareOrEmailPDF(doc, fileName); };
+  document.getElementById('wkDownload').onclick = ()=>{ const doc = buildWeeklyPDF(sum); closeSheet(); fallbackDownloadBlob(doc.output('blob'), fileName); };
+  document.getElementById('wkMail').onclick = async ()=>{
+    const doc = buildWeeklyPDF(sum);
+    closeSheet();
+    showToast('A gerar PDF e a enviar...');
+    await shareOrEmailPDF(doc, fileName, {
+      toEmail: currentUser.email,
+      emailSubject: `${currentUser.escalao} — Presenças da semana ${shortDM(sum.start)} a ${formatDatePT(sum.end)}`,
+      emailBody: weeklyEmailText(sum)
+    });
+  };
+}
+
+/* à sexta-feira, ao abrir a app, avisa que o resumo da semana está pronto (uma vez por dia) */
+function checkFridaySummaryOnOpen(){
+  if(isAdminSession || new Date().getDay() !== 5) return;
+  const today = todayISO();
+  const sum = weeklySummary(today);
+  if(!sum.sessions.length) return;
+  if(document.getElementById('overlay').classList.contains('show')) return;    // não tapa o alerta de aniversário
+  const key = 'udb_friday_' + currentUser.username;
+  try{ if(localStorage.getItem(key) === today) return; localStorage.setItem(key, today); }catch(e){}
+  const N = sum.sessions.length, k = sum.all.length;
+  openSheetRaw(`
+    <h2>📋 Sexta-feira: resumo da semana</h2>
+    <p style="color:var(--muted);font-size:14px;line-height:1.55;margin-top:-6px;">${N} treino${N===1?'':'s'} registado${N===1?'':'s'} esta semana. <b>${k}</b> jogador${k===1?'':'es'} participaram em ${N===1?'todos':'todos os treinos'}.</p>
+    <div class="stack" style="margin-top:6px;">
+      <button class="btn btn-primary" id="frOpen">Ver resumo (PDF)</button>
+      <button class="btn btn-ghost" id="frClose">Agora não</button>
+    </div>
+  `);
+  document.getElementById('frClose').onclick = closeSheet;
+  document.getElementById('frOpen').onclick = ()=> openWeeklySheet(today);
 }
 
 function openNewTrainingSheet(){
