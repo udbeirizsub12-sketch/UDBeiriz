@@ -1937,23 +1937,21 @@ function drawPoster(canvas, data, crest){
   const divY = y - 8;
   ctx.fillStyle = 'rgba(255,212,0,0.55)'; ctx.fillRect(M, divY, W - 2*M, 3);
 
-  /* capitão e sub-capitão */
-  const capY = divY + 68, viceY = capY + 66;
-  [['Capitão:', data.captain, capY], ['Sub-capitão:', data.vice, viceY]].forEach(r=>{
+  /* capitão e sub-capitão: só aparecem os que foram escolhidos */
+  const roles = [['Capitão:', data.captain], ['Sub-capitão:', data.vice]].filter(r=> r[1]);
+  let lastRoleY = divY;
+  roles.forEach((r, i)=>{
+    const ry = divY + 68 + i * 66; lastRoleY = ry;
     ctx.fillStyle = GOLD; ctx.font = `bold 38px ${POSTER_FONT}`;
-    ctx.fillText(r[0], M, r[2]);
+    ctx.fillText(r[0], M, ry);
     const lx = M + ctx.measureText(r[0]).width + 24;
-    if(r[1]){
-      ctx.fillStyle = WHITE;
-      fitFont(ctx, r[1], 'bold', W - M - lx, 48, 26);
-      ctx.fillText(ellipsize(ctx, r[1], W - M - lx), lx, r[2]);
-    }else{
-      ctx.fillStyle = MUTED; ctx.font = `bold 44px ${POSTER_FONT}`;
-      ctx.fillText('—', lx, r[2]);
-    }
-    ctx.fillStyle = 'rgba(244,251,255,0.14)'; ctx.fillRect(M, r[2] + 16, W - 2*M, 2);
+    ctx.fillStyle = WHITE;
+    fitFont(ctx, r[1], 'bold', W - M - lx, 48, 26);
+    ctx.fillText(ellipsize(ctx, r[1], W - M - lx), lx, ry);
+    ctx.fillStyle = 'rgba(244,251,255,0.14)'; ctx.fillRect(M, ry + 16, W - 2*M, 2);
   });
-  const listTop = viceY + 58;
+  /* sem cargos escolhidos, a lista de convocados sobe e ocupa o espaço todo */
+  const listTop = roles.length ? lastRoleY + 58 : divY + 46;
 
   /* restantes convocados */
   const others = data.others;
@@ -2124,7 +2122,7 @@ function confirmDeleteConv(id){
 function renderConvEditor(wrap, c){
   const players = sortedPlayers();
   const label = p => `${p.number!=null && String(p.number).trim()!=='' ? p.number + ' · ' : ''}${p.name}`;
-  const opts = (exclude, selected) => `<option value="">— escolher —</option>` + players.filter(p=>p.id !== exclude)
+  const opts = (exclude, selected, none) => `<option value="">${none}</option>` + players.filter(p=>p.id !== exclude)
     .map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${escapeHtml(label(p))}</option>`).join('');
   const calledCount = () => players.filter(p=> c.called[p.id] || p.id === c.captain || p.id === c.vice).length;
   const escalaoOpts = (currentUser && currentUser.escalao && !ESCALOES.includes(currentUser.escalao) ? [currentUser.escalao] : []).concat(ESCALOES);
@@ -2153,11 +2151,12 @@ function renderConvEditor(wrap, c){
     </div>
 
     <div class="card conv-block">
-      <div class="card-title">Capitão e sub-capitão</div>
+      <div class="card-title">Capitão e sub-capitão <span style="color:var(--muted);font-weight:600;font-size:12px;">(opcional)</span></div>
+      <div class="card-sub" style="margin-top:2px;">Se não escolheres, o cartaz mostra só a lista de convocados.</div>
       <div class="field-label">Capitão</div>
-      <select id="cvCaptain">${opts(c.vice, c.captain)}</select>
+      <select id="cvCaptain">${opts(c.vice, c.captain, '— sem capitão —')}</select>
       <div class="field-label">Sub-capitão</div>
-      <select id="cvVice">${opts(c.captain, c.vice)}</select>
+      <select id="cvVice">${opts(c.captain, c.vice, '— sem sub-capitão —')}</select>
     </div>
 
     <div class="card conv-block">
@@ -2268,11 +2267,12 @@ function convEmailText(c){
     `Local do jogo: ${d.place || '—'}`,
     `Hora da concentração: ${d.meet || '—'}`,
     `Hora do jogo: ${d.time || '—'}`,
-    `Equipa adversária: ${d.opponent || '—'}`, '',
-    `Capitão: ${d.captain || '—'}`,
-    `Sub-capitão: ${d.vice || '—'}`, ''
+    `Equipa adversária: ${d.opponent || '—'}`, ''
   ];
-  if(d.others.length){ lines.push('Restantes convocados:'); d.others.forEach(p=> lines.push('- ' + p.name)); }
+  if(d.captain) lines.push(`Capitão: ${d.captain}`);
+  if(d.vice) lines.push(`Sub-capitão: ${d.vice}`);
+  if(d.captain || d.vice) lines.push('');
+  if(d.others.length){ lines.push(d.captain || d.vice ? 'Restantes convocados:' : 'Convocados:'); d.others.forEach(p=> lines.push('- ' + p.name)); }
   lines.push('', 'Força UDB!');
   return lines.join('\n');
 }
