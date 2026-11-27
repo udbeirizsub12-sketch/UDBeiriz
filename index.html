@@ -252,6 +252,24 @@ input[type=time]:focus{outline:none;border-color:var(--gold);}
 .wk-table td{padding:7px 4px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;}
 .wk-table tr.wk-all td{background:rgba(255,212,0,0.09);}
 .wk-p{color:var(--ok);font-weight:800;} .wk-f{color:var(--danger);font-weight:800;} .wk-n{color:var(--muted);}
+
+/* ---- menu grande na vertical ---- */
+.home-blank{padding:18px 0 4px 0;}
+.home-logo{width:64px;}
+.big-menu{display:flex;flex-direction:column;gap:12px;margin:14px 0 0 0;}
+.menu-btn{display:flex;align-items:center;gap:16px;width:100%;min-height:78px;padding:12px 18px;border-radius:20px;text-align:left;font-family:inherit;
+  color:var(--white);background:var(--card);border:1px solid rgba(255,255,255,0.08);cursor:pointer;box-shadow:0 10px 24px -16px rgba(0,0,0,0.7);transition:transform .12s, border-color .12s;}
+.menu-btn:active{transform:scale(0.985);border-color:rgba(92,192,224,0.55);}
+.menu-btn .mi{font-size:32px;width:54px;height:54px;display:flex;align-items:center;justify-content:center;border-radius:16px;background:rgba(92,192,224,0.12);flex-shrink:0;}
+.menu-btn .mt{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+.menu-btn .mt b{font-size:21px;font-weight:800;letter-spacing:.2px;}
+.menu-btn .mt small{font-size:13px;color:var(--muted);font-weight:500;}
+.menu-btn .mc{font-size:30px;color:var(--gold);font-weight:700;line-height:1;}
+.section-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 20px 12px 20px;max-width:560px;width:100%;margin:0 auto;
+  position:sticky;top:76px;z-index:19;background:linear-gradient(180deg, rgba(6,18,23,0.92), transparent);}
+.back-menu{display:flex;align-items:center;gap:8px;min-height:50px;padding:0 20px;border-radius:16px;font-family:inherit;font-size:17px;font-weight:800;color:var(--white);
+  background:linear-gradient(140deg, var(--blue-deep), #135e79);border:1px solid rgba(92,192,224,0.5);cursor:pointer;box-shadow:0 6px 18px -8px rgba(92,192,224,0.5);}
+.section-name{font-size:17px;font-weight:800;color:var(--gold);display:flex;align-items:center;gap:8px;}
 </style>
 </head>
 <body>
@@ -342,14 +360,7 @@ input[type=time]:focus{outline:none;border-color:var(--gold);}
     <select id="adminUserSelect"></select>
   </div>
 
-  <div class="tabs">
-    <div class="tab" data-tab="plantel">Plantel</div>
-    <div class="tab" data-tab="presencas">Presenças</div>
-    <div class="tab" data-tab="jogos">Jogos</div>
-    <div class="tab" data-tab="mensalidades">Mensalidades</div>
-    <div class="tab" data-tab="convocados">Convocados</div>
-    <div class="tab" data-tab="definicoes">Definições</div>
-  </div>
+  <div class="section-bar" id="sectionBar" style="display:none;"></div>
 
   <main>
     <div class="subhead-row" id="subheadRow"></div>
@@ -688,7 +699,6 @@ function enterApp(){
   document.getElementById('adminSwitchWrap').style.display = isAdminSession ? 'block' : 'none';
   document.getElementById('headerTitle').innerHTML = `${escapeHtml(currentUser.escalao)} <span>·</span> Gestão`;
   currentTab = 'inicio';
-  document.querySelectorAll('.tab').forEach(t=> t.classList.remove('active'));
   showScreen('screenApp');
   render();
   checkBirthdaysOnOpen();
@@ -767,15 +777,41 @@ document.getElementById('btnRecoverSend').onclick = async ()=>{
 /* ===================================================================
    RENDER DISPATCHER
    =================================================================== */
+const MENU = [
+  {id:'plantel', icon:'👕', label:'Plantel', sub:'Jogadores e camisolas'},
+  {id:'presencas', icon:'✅', label:'Presenças', sub:'Treinos e resumo da semana'},
+  {id:'jogos', icon:'⚽', label:'Jogos', sub:'Golos, resultados e relatórios'},
+  {id:'mensalidades', icon:'💶', label:'Mensalidades', sub:'Pagamentos dos atletas'},
+  {id:'convocados', icon:'📣', label:'Convocados', sub:'Cartaz do jogo'},
+  {id:'definicoes', icon:'⚙️', label:'Definições', sub:'Conta, acessos e avisos'}
+];
+
 function renderInicio(wrap){
   const crest = document.querySelector('#screenApp header .crest');
-  wrap.innerHTML = `<div class="home-blank"><img class="home-logo" src="${crest ? crest.src : ''}" alt="União Desportiva Beiriz"></div>`;
+  wrap.innerHTML = `
+    <div class="home-blank"><img class="home-logo" src="${crest ? crest.src : ''}" alt="União Desportiva Beiriz"></div>
+    <nav class="big-menu" id="bigMenu">${MENU.map(m=>`
+      <button type="button" class="menu-btn" data-tab="${m.id}">
+        <span class="mi">${m.icon}</span>
+        <span class="mt"><b>${m.label}</b><small>${m.sub}</small></span>
+        <span class="mc">›</span>
+      </button>`).join('')}
+    </nav>`;
+  wrap.querySelectorAll('.menu-btn').forEach(b=>{ b.onclick = ()=> goTo(b.dataset.tab); });
 }
 
-function goHome(){
-  currentTab = 'inicio';
-  document.querySelectorAll('.tab').forEach(t=> t.classList.remove('active'));
-  render();
+function toTop(){ if(document.scrollingElement) document.scrollingElement.scrollTop = 0; }
+function goTo(name){ currentTab = name; render(); toTop(); }
+function goHome(){ currentTab = 'inicio'; render(); toTop(); }
+
+/* barra com o botão grande "← Menu", visível dentro de cada secção */
+function paintSectionBar(){
+  const bar = document.getElementById('sectionBar');
+  if(currentTab === 'inicio'){ bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  const m = MENU.find(x=> x.id === currentTab);
+  bar.style.display = 'flex';
+  bar.innerHTML = `<button type="button" class="back-menu" id="backMenu">← Menu</button><span class="section-name">${m ? m.icon + ' ' + m.label : ''}</span>`;
+  document.getElementById('backMenu').onclick = goHome;
 }
 
 function render(){
@@ -783,6 +819,7 @@ function render(){
   const wrap = document.getElementById('listWrap');
   const fab = document.getElementById('fabAdd');
   subhead.innerHTML = ''; fab.style.display = 'flex';
+  paintSectionBar();
 
   if(currentTab==='inicio'){ fab.style.display = 'none'; renderInicio(wrap); }
   else if(currentTab==='plantel') renderPlantel(subhead, wrap, fab);
